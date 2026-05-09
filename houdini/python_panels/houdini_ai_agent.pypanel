@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <interface name="houdini_ai_agent" label="Houdini AI Agent" icon="MISC_python" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[
+from houdini_ai_agent.ui.main_panel import create_panel
+
+
+def onCreateInterface():
+    return create_panel()
+]]></script>
+    <includeInToolbarMenu menu_position="0" create_separator="true"/>
+    <help><![CDATA[Houdini-native AI Agent panel.]]></help>
+  </interface>
+</pythonPanelDocument>

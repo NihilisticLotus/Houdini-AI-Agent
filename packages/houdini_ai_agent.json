@@ -1,0 +1,11 @@
+{
+  "env": [
+    {
+      "HOUDINI_AI_AGENT_ROOT": {
+        "value": "E:/Work/Houdini/AI_Agent",
+        "method": "replace"
+      }
+    }
+  ],
+  "path": "$HOUDINI_AI_AGENT_ROOT/houdini"
+}
