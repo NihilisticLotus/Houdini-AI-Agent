@@ -16,7 +16,7 @@ from houdini_ai_agent.qt import QtCore, QtWidgets
 class SettingsDialog(QtWidgets.QDialog):
     providers_saved = QtCore.Signal(list)
 
-    COLUMNS = ["Name", "Base URL", "API Key / Env", "Model", "Reasoning", "Default Thinking"]
+    COLUMNS = ["Name", "Base URL", "API Key / Env", "Model", "Reasoning", "Vision", "Vision Fallback", "Default Thinking"]
 
     def __init__(self, providers: List[ProviderConfig], parent=None):
         super().__init__(parent)
@@ -33,12 +33,18 @@ class SettingsDialog(QtWidgets.QDialog):
         intro = QtWidgets.QLabel(
             "配置 OpenAI-compatible provider。API Key 只保存环境变量名，不保存密钥本身。"
         )
+        intro.setText("Configure OpenAI-compatible providers. API Key accepts an env name or direct key. Mark one provider as a vision fallback for text-only models.")
         intro.setWordWrap(True)
         root.addWidget(intro)
 
         self.table = QtWidgets.QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         root.addWidget(self.table, 1)
@@ -84,11 +90,21 @@ class SettingsDialog(QtWidgets.QDialog):
         reasoning.setChecked(provider.supports_reasoning)
         self.table.setCellWidget(row, 4, reasoning)
 
+        vision = QtWidgets.QCheckBox()
+        vision.setChecked(provider.supports_vision)
+        vision.setToolTip("Enable this for providers that can directly read attached images.")
+        self.table.setCellWidget(row, 5, vision)
+
+        fallback = QtWidgets.QCheckBox()
+        fallback.setChecked(provider.use_as_vision_fallback)
+        fallback.setToolTip("When the selected main model is text-only, the first checked fallback provider will summarize images for it.")
+        self.table.setCellWidget(row, 6, fallback)
+
         thinking = QtWidgets.QComboBox()
         thinking.addItems(list(THINKING_LEVELS.keys()))
         index = thinking.findText(provider.default_thinking_level)
         thinking.setCurrentIndex(index if index >= 0 else 1)
-        self.table.setCellWidget(row, 5, thinking)
+        self.table.setCellWidget(row, 7, thinking)
 
         self.table.setRowHeight(row, 28)
 
@@ -115,6 +131,8 @@ class SettingsDialog(QtWidgets.QDialog):
                 api_key_env="OPENAI_API_KEY",
                 model="gpt-5.2",
                 supports_reasoning=True,
+                supports_vision=True,
+                use_as_vision_fallback=False,
                 default_thinking_level="中",
                 source="custom",
             )
@@ -135,7 +153,9 @@ class SettingsDialog(QtWidgets.QDialog):
             if not name:
                 continue
             reasoning = self.table.cellWidget(row, 4)
-            thinking = self.table.cellWidget(row, 5)
+            vision = self.table.cellWidget(row, 5)
+            fallback = self.table.cellWidget(row, 6)
+            thinking = self.table.cellWidget(row, 7)
             source = "mock" if name == "Mock Preview" else "custom"
             providers.append(
                 ProviderConfig(
@@ -144,6 +164,8 @@ class SettingsDialog(QtWidgets.QDialog):
                     api_key_env=self._text(row, 2),
                     model=self._text(row, 3),
                     supports_reasoning=bool(reasoning.isChecked()) if reasoning else True,
+                    supports_vision=bool(vision.isChecked()) if vision else True,
+                    use_as_vision_fallback=bool(fallback.isChecked()) if fallback else False,
                     default_thinking_level=thinking.currentText() if thinking else "中",
                     source=source,
                 )

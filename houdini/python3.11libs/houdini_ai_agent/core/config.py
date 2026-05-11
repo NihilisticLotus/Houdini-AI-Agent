@@ -57,6 +57,8 @@ class ProviderConfig:
     api_key_env: str = ""
     model: str = ""
     supports_reasoning: bool = True
+    supports_vision: bool = True
+    use_as_vision_fallback: bool = False
     default_thinking_level: str = "中"
     source: str = "custom"
 
@@ -100,6 +102,8 @@ def default_providers() -> List[ProviderConfig]:
             api_key_env="",
             model=codex_model or "gpt-5.5",
             supports_reasoning=True,
+            supports_vision=False,
+            use_as_vision_fallback=False,
             default_thinking_level="中",
             source="codex",
         ),
@@ -109,6 +113,8 @@ def default_providers() -> List[ProviderConfig]:
             api_key_env="",
             model="houdini-ui-preview",
             supports_reasoning=True,
+            supports_vision=True,
+            use_as_vision_fallback=False,
             default_thinking_level="中",
             source="mock",
         )

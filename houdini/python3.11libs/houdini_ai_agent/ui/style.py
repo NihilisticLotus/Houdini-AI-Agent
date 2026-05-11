@@ -4,160 +4,305 @@
 STYLE = """
 QWidget {
     font-size: 12px;
-    color: #e7e4dd;
+    color: #ece7df;
+    background: transparent;
 }
+
 QWidget#HoudiniAIAgentPanel {
-    background: rgba(58, 56, 53, 255);
+    background: #34312d;
 }
-QFrame#CenterWorkspace {
-    border: 1px solid rgba(88, 90, 92, 110);
-    border-radius: 8px;
-    background: rgba(46, 45, 42, 155);
-}
+
 QFrame#HeaderBar {
-    border: 1px solid rgba(104, 94, 74, 110);
-    border-radius: 8px;
-    background: rgba(49, 45, 40, 165);
+    border: 1px solid rgba(128, 112, 84, 0.55);
+    border-radius: 10px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(70, 60, 50, 0.92),
+        stop: 1 rgba(50, 45, 40, 0.95)
+    );
 }
+
 QFrame#ActionBar {
     background: transparent;
 }
-QFrame#ComposerBar {
-    border: 1px solid rgba(104, 94, 74, 100);
-    border-radius: 8px;
-    background: rgba(58, 52, 45, 150);
+
+QFrame#CenterWorkspace,
+QFrame#SessionSidebar,
+QWidget#ContextPanel,
+QFrame#ComposerBar,
+QWidget#ExecutionTrace {
+    border: 1px solid rgba(120, 105, 82, 0.42);
+    border-radius: 10px;
+    background: rgba(45, 42, 39, 0.92);
 }
-QFrame#SessionSidebar {
-    border: 1px solid rgba(104, 94, 74, 110);
-    border-radius: 8px;
-    background: rgba(41, 39, 35, 145);
+
+QFrame#CenterWorkspace {
+    background: rgba(43, 40, 37, 0.96);
 }
+
 QLabel#AppTitle {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 700;
+    color: #f4efe7;
 }
+
+QLabel#PanelTitle {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f1ece3;
+}
+
+QLabel#HintText {
+    color: #b7ab99;
+}
+
+QLabel#StatusPill {
+    color: #f3eadf;
+    padding: 3px 8px;
+    border: 1px solid rgba(151, 128, 94, 0.55);
+    border-radius: 7px;
+    background: rgba(58, 52, 46, 0.95);
+}
+
+QLabel#WelcomeText {
+    color: #d9d0c4;
+    padding: 18px;
+    border: 1px dashed rgba(154, 136, 110, 0.55);
+    border-radius: 10px;
+    background: rgba(61, 55, 49, 0.5);
+}
+
 QFrame#MessageBubble {
-    border: 1px solid rgba(120, 112, 94, 70);
-    border-radius: 8px;
-    background: rgba(61, 58, 54, 145);
+    border: 1px solid rgba(123, 110, 92, 0.3);
+    border-radius: 10px;
+    background: rgba(63, 59, 55, 0.92);
 }
+
 QFrame#MessageBubble[role="user"] {
-    background: rgba(72, 89, 108, 155);
+    border: 1px solid rgba(118, 132, 157, 0.5);
+    background: rgba(82, 98, 120, 0.88);
 }
+
 QFrame#MessageBubble[role="thought"] {
-    background: rgba(49, 50, 48, 120);
-    border: 1px solid rgba(126, 116, 94, 95);
+    border: 1px solid rgba(150, 128, 93, 0.45);
+    background: rgba(52, 50, 46, 0.95);
 }
+
 QLabel#MessageHeader {
-    color: #c9d8ea;
+    color: #d7e4f5;
     font-weight: 600;
 }
+
 QLabel#MessageBody {
-    color: #f0ede7;
+    color: #f2ede6;
 }
-QLabel#WelcomeText {
-    color: #d5d0c6;
-    padding: 16px;
-    border: 1px dashed rgba(150, 136, 112, 90);
-    border-radius: 8px;
-    background: rgba(56, 52, 47, 110);
-}
-QLabel#HintText {
-    color: #b0a89b;
-}
-QLabel#StatusPill {
-    color: #ece5d8;
-    padding: 2px 6px;
-    border: 1px solid rgba(128, 116, 94, 80);
-    border-radius: 5px;
-    background: rgba(46, 42, 37, 170);
-}
-QLabel#PanelTitle {
-    font-weight: 700;
-    font-size: 13px;
-}
-QLabel#ContextValue {
-    color: #ece6db;
-}
-QFrame#ImageThumb {
-    border: 1px solid rgba(128, 118, 98, 75);
-    border-radius: 5px;
-    background: rgba(36, 34, 32, 155);
-}
+
 QFrame#AttachmentBar {
-    border: 1px solid rgba(128, 118, 98, 90);
-    border-radius: 6px;
-    background: rgba(54, 51, 48, 160);
+    border: 1px solid rgba(130, 116, 94, 0.45);
+    border-radius: 8px;
+    background: rgba(60, 56, 51, 0.75);
 }
+
+QFrame#ImageThumb,
 QLabel#ImagePreview {
-    border: 1px solid rgba(128, 118, 98, 90);
-    border-radius: 6px;
-    background: rgba(28, 27, 24, 180);
+    border: 1px solid rgba(138, 122, 98, 0.45);
+    border-radius: 7px;
+    background: rgba(28, 27, 25, 0.98);
 }
+
 QListWidget#ConversationList {
     border: none;
     background: transparent;
 }
+
 QListWidget#ConversationList::item {
-    padding: 8px;
-    border-radius: 6px;
-    margin-bottom: 2px;
+    padding: 8px 10px;
+    border-radius: 7px;
+    margin-bottom: 3px;
+    color: #ded6ca;
 }
+
+QListWidget#ConversationList::item:hover {
+    background: rgba(94, 86, 75, 0.42);
+}
+
 QListWidget#ConversationList::item:selected {
-    background: rgba(90, 104, 122, 170);
+    background: rgba(92, 109, 132, 0.82);
+    color: #f8f5ef;
 }
-QTextEdit {
-    border: 1px solid rgba(120, 112, 94, 80);
+
+QTextEdit,
+QLineEdit,
+QComboBox,
+QListWidget,
+QTreeWidget,
+QPlainTextEdit {
+    border: 1px solid rgba(122, 110, 90, 0.5);
     border-radius: 8px;
-    background: rgba(22, 22, 21, 210);
-    selection-background-color: rgba(104, 133, 168, 160);
+    background: rgba(25, 24, 23, 0.98);
+    selection-background-color: rgba(102, 130, 162, 0.9);
 }
+
+QTextEdit,
+QPlainTextEdit {
+    padding: 6px 8px;
+}
+
 QLineEdit {
-    min-height: 24px;
-    border: 1px solid rgba(120, 112, 94, 80);
-    border-radius: 6px;
-    background: rgba(28, 28, 27, 190);
+    min-height: 26px;
     padding: 0 8px;
 }
+
 QPushButton {
-    min-height: 24px;
-    padding: 0 10px;
-    border: 1px solid rgba(128, 116, 94, 90);
-    border-radius: 6px;
-    background: rgba(70, 64, 57, 185);
+    min-height: 26px;
+    padding: 0 11px;
+    border: 1px solid rgba(137, 119, 88, 0.56);
+    border-radius: 7px;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 rgba(87, 75, 61, 0.92),
+        stop: 1 rgba(71, 63, 54, 0.96)
+    );
+    color: #efe7db;
 }
+
 QPushButton:hover {
-    background: rgba(88, 80, 70, 195);
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 rgba(101, 87, 70, 0.96),
+        stop: 1 rgba(80, 71, 60, 0.98)
+    );
 }
+
 QPushButton:pressed {
-    background: rgba(58, 54, 48, 205);
+    background: rgba(63, 56, 49, 0.98);
 }
+
+QPushButton:disabled {
+    color: #92887b;
+    border-color: rgba(94, 86, 75, 0.4);
+    background: rgba(55, 51, 47, 0.75);
+}
+
 QPushButton#SidebarToggle {
-    min-width: 22px;
-    max-width: 22px;
-    padding: 0;
-    border-radius: 8px;
-    background: rgba(60, 56, 50, 165);
-}
-QPushButton#SidebarToggle:hover {
-    background: rgba(84, 78, 69, 185);
-}
-QComboBox {
+    min-width: 24px;
+    max-width: 24px;
     min-height: 24px;
-    border: 1px solid rgba(120, 112, 94, 80);
-    border-radius: 6px;
-    background: rgba(34, 33, 31, 185);
+    max-height: 24px;
+    padding: 0;
+    border-radius: 12px;
+    background: rgba(72, 66, 58, 0.95);
+}
+
+QPushButton#SidebarToggle:hover {
+    background: rgba(95, 86, 75, 0.98);
+}
+
+QToolButton {
+    border: 1px solid rgba(124, 109, 86, 0.38);
+    border-radius: 7px;
+    padding: 4px 8px;
+    background: rgba(58, 53, 48, 0.75);
+    color: #e4dbcf;
+}
+
+QToolButton:hover {
+    background: rgba(73, 66, 58, 0.9);
+}
+
+QComboBox {
+    min-height: 26px;
     padding: 0 8px;
 }
-QGroupBox {
-    margin-top: 8px;
-    padding-top: 8px;
-    border: 1px solid rgba(104, 94, 74, 100);
-    border-radius: 8px;
+
+QComboBox::drop-down {
+    width: 22px;
+    border: none;
+    background: transparent;
 }
-QListWidget {
-    border: 1px solid rgba(104, 94, 74, 100);
+
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+
+QScrollBar:vertical,
+QScrollBar:horizontal {
+    border: none;
+    background: rgba(37, 35, 33, 0.55);
+    border-radius: 6px;
+    margin: 2px;
+}
+
+QScrollBar:vertical {
+    width: 12px;
+}
+
+QScrollBar:horizontal {
+    height: 12px;
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+    background: rgba(116, 102, 81, 0.8);
+    border-radius: 6px;
+    min-height: 26px;
+    min-width: 26px;
+}
+
+QScrollBar::handle:hover {
+    background: rgba(140, 122, 95, 0.9);
+}
+
+QScrollBar::add-line,
+QScrollBar::sub-line,
+QScrollBar::add-page,
+QScrollBar::sub-page {
+    border: none;
+    background: transparent;
+}
+
+QMenu {
+    border: 1px solid rgba(124, 109, 86, 0.46);
+    background: rgba(45, 41, 37, 0.98);
+    padding: 6px;
+}
+
+QMenu::item {
+    padding: 6px 18px;
+    border-radius: 6px;
+}
+
+QMenu::item:selected {
+    background: rgba(91, 108, 131, 0.88);
+}
+
+QGroupBox {
+    margin-top: 9px;
+    padding-top: 10px;
+    border: 1px solid rgba(112, 98, 80, 0.45);
+    border-radius: 9px;
+}
+
+QSplitter::handle {
+    background: rgba(64, 60, 56, 0.55);
+}
+
+QSplitter::handle:horizontal {
+    width: 5px;
+}
+
+QTableWidget {
+    border: 1px solid rgba(122, 110, 90, 0.46);
     border-radius: 8px;
-    background: rgba(32, 31, 29, 170);
+    background: rgba(29, 28, 26, 0.98);
+    gridline-color: rgba(83, 77, 69, 0.8);
+}
+
+QHeaderView::section {
+    border: none;
+    padding: 6px;
+    background: rgba(60, 54, 48, 0.98);
+    color: #eee7dc;
 }
 """

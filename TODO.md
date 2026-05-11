@@ -1,30 +1,63 @@
 # TODO
 
-## Near Term
+## Next Priority
 
-- Expand provider compatibility testing across OpenAI-compatible endpoints
-- Replace remaining mock execution flow with structured task orchestration
-- Expose Houdini actions for node creation, connection, and parameter editing
-- Improve viewport capture and scene-summary tooling
+- Add a bundled local vision backend option inspired by `moondream-mcp`, so image fallback can run without a remote API
+- Expand tool action coverage:
+  - connect nodes
+  - set parameters
+  - create subnet / geometry containers with intent-aware defaults
+  - toggle display / render flags
+- Make repair planning multi-step:
+  - inspect
+  - propose
+  - execute
+  - validate
+  - retry when safe
 
-## Error Repair
+## Vision and Multimodal
 
-- Collect cook errors, warnings, Python errors, and VEX errors
-- Build an automatic repair loop with validation and retry
-- Add safer undo-group based repair execution
-- Preserve before/after snapshots for repair audit history
+- Support explicit provider capability presets for:
+  - text-only
+  - text + vision
+  - vision-only companion
+- Add image understanding cache per conversation so repeated screenshots do not re-spend tokens unnecessarily
+- Add OCR-focused fallback mode for screenshots dominated by text or error logs
+- Evaluate direct integration patterns inspired by:
+  - `ColeMurray/moondream-mcp`
+  - `mrgoonie/human-mcp`
+  - `aliargun/mcp-server-gemini`
+
+## Houdini Execution
+
+- Expose richer HOM actions through the model-planning layer
+- Add safe parameter diff preview before destructive edits
+- Add undo-group snapshots for every tool execution
+- Add structured node graph summaries for large scenes
+- Add viewport object picking / selection grounding when screenshots are used
 
 ## UI and Workflow
 
-- Add per-message resend and edit actions
-- Add a richer timeline for tool calls and repair attempts
-- Improve responsive behavior for very wide and very tall panel sizes
-- Add session tags or pinning for larger projects
-- Add provider health indicator and token/cost telemetry
+- Add richer visual chips for:
+  - current provider
+  - current model
+  - vision mode
+  - active thinking level
+- Add per-message resend
+- Add session pinning / favorites
+- Add collapsible execution groups for long repair runs
+- Add optional compact mode for smaller Houdini layouts
 
-## Packaging and Distribution
+## Reliability
+
+- Add provider compatibility tests for more OpenAI-compatible APIs
+- Add request/response fixtures for action-planning JSON validation
+- Add telemetry for cancellation, fallback vision use, and provider errors
+- Add defensive parsing for providers that return JSON wrapped in prose
+
+## Packaging
 
 - Add release packaging script
-- Add versioning and changelog flow
-- Add screenshots and demo media for GitHub releases
-- Publish a first public repository release
+- Add changelog workflow
+- Add screenshot / demo asset pipeline for GitHub releases
+- Publish a tagged release once the next Houdini validation pass is complete

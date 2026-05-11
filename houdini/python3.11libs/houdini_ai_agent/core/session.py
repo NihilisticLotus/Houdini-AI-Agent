@@ -17,7 +17,12 @@ import uuid
 
 from houdini_ai_agent.core.codex_cli import CodexCallError, send_codex_chat
 from houdini_ai_agent.core.config import ProviderConfig, load_providers
-from houdini_ai_agent.core.openai_compat import ProviderCallError, build_reasoning_effort, send_chat
+from houdini_ai_agent.core.openai_compat import (
+    ProviderCallError,
+    build_reasoning_effort,
+    describe_images,
+    send_chat,
+)
 from houdini_ai_agent.qt import QtCore
 
 
@@ -61,14 +66,18 @@ class Conversation:
 
 class ModelCallWorker(QtCore.QObject):
     finished = QtCore.Signal(str, str, str, str, str)
+    progress = QtCore.Signal(str, str, str)
 
     def __init__(
         self,
         task_id: str,
         provider: ProviderConfig,
         prompt: str,
+        vision_prompt: str,
         system_prompt: str,
         image_paths: List[str],
+        vision_provider: Optional[ProviderConfig],
+        response_language: str,
         cwd: str,
         thinking_level: str,
         parent=None,
@@ -77,8 +86,11 @@ class ModelCallWorker(QtCore.QObject):
         self.task_id = task_id
         self.provider = provider
         self.prompt = prompt
+        self.vision_prompt = vision_prompt
         self.system_prompt = system_prompt
         self.image_paths = image_paths
+        self.vision_provider = vision_provider
+        self.response_language = response_language
         self.cwd = cwd
         self.thinking_level = thinking_level
         self._cancel_event = threading.Event()
@@ -95,10 +107,44 @@ class ModelCallWorker(QtCore.QObject):
 
     def run(self) -> None:
         try:
+            prompt = self.prompt
+            image_paths = list(self.image_paths)
+            if image_paths and not self.provider.supports_vision:
+                if self.vision_provider is not None:
+                    self.progress.emit(
+                        "Vision fallback",
+                        f"Using {self.vision_provider.name} to interpret {len(image_paths)} image(s) for {self.provider.name}.",
+                        "running",
+                    )
+                    summary = describe_images(
+                        provider=self.vision_provider,
+                        user_text=self.vision_prompt,
+                        image_paths=image_paths,
+                        response_language=self.response_language,
+                    )
+                    prompt = f"{prompt}\n\nVision companion notes:\n{summary}"
+                    image_paths = []
+                    self.progress.emit(
+                        "Vision fallback completed",
+                        f"Collected image notes from {self.vision_provider.name}.",
+                        "success",
+                    )
+                else:
+                    prompt = (
+                        f"{prompt}\n\n"
+                        "Note: The user attached image files, but the current model cannot read images and no fallback vision provider is configured. "
+                        "Do not claim to have seen the images; explain that a vision-capable provider is needed for image understanding."
+                    )
+                    image_paths = []
+                    self.progress.emit(
+                        "Vision unavailable",
+                        f"{self.provider.name} does not support image input and no vision fallback provider is configured.",
+                        "warning",
+                    )
             if self.provider.source == "codex":
                 response = send_codex_chat(
-                    prompt=self.prompt,
-                    image_paths=self.image_paths,
+                    prompt=prompt,
+                    image_paths=image_paths,
                     model=self.provider.model,
                     cwd=self.cwd,
                     cancel_event=self._cancel_event,
@@ -116,8 +162,8 @@ class ModelCallWorker(QtCore.QObject):
                 response = send_chat(
                     provider=self.provider,
                     system_prompt=self.system_prompt,
-                    user_text=self.prompt,
-                    image_paths=self.image_paths,
+                    user_text=prompt,
+                    image_paths=image_paths,
                     thinking_level=self.thinking_level,
                     max_tokens=1400,
                 )
@@ -436,6 +482,7 @@ class AgentSession(QtCore.QObject):
         prompt = self._build_agent_tool_prompt(text, context)
         self._start_model_call(
             prompt=prompt,
+            vision_prompt=text,
             system_prompt=self._build_system_prompt(context, text),
             image_paths=image_paths,
             context=context,
@@ -554,6 +601,7 @@ class AgentSession(QtCore.QObject):
             self._add_event("调用模型分析", "Local fix rules did not complete the repair; asking the selected model for diagnosis.", "running")
             self._start_model_call(
                 prompt=self._build_codex_prompt(prompt, context) if self.current_provider.source == "codex" else prompt,
+                vision_prompt=text,
                 system_prompt=self._build_system_prompt(context),
                 image_paths=[],
                 context=context,
@@ -621,24 +669,31 @@ class AgentSession(QtCore.QObject):
     def _start_model_call(
         self,
         prompt: str,
+        vision_prompt: str,
         system_prompt: str,
         image_paths: List[str],
         context: Dict[str, object],
     ) -> None:
         task_id = self._active_task_id or uuid.uuid4().hex
         self._active_task_id = task_id
+        vision_provider = self._find_vision_fallback_provider(self.current_provider) if image_paths else None
+        response_language = self._preferred_response_language(vision_prompt)
         thread = QtCore.QThread(self)
         worker = ModelCallWorker(
             task_id=task_id,
             provider=self.current_provider,
             prompt=prompt,
+            vision_prompt=vision_prompt,
             system_prompt=system_prompt,
             image_paths=image_paths,
+            vision_provider=vision_provider,
+            response_language=response_language,
             cwd=self._provider_workdir(context),
             thinking_level=self.current_thinking_level,
         )
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
+        worker.progress.connect(self._add_event)
         worker.finished.connect(self._model_call_finished)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
@@ -646,17 +701,31 @@ class AgentSession(QtCore.QObject):
         thread.finished.connect(lambda task_id=task_id, thread=thread: self._clear_worker_refs(task_id, thread))
         self._active_thread = thread
         self._active_worker = worker
-        self._add_message("thought", self._format_live_request_plan(context, image_paths))
+        self._add_message("thought", self._format_live_request_plan(context, image_paths, vision_provider))
         self._add_event("后台思考", "Model call is running in a background thread; Houdini remains usable.", "running")
         thread.start()
 
-    def _format_live_request_plan(self, context: Dict[str, object], image_paths: List[str]) -> str:
+    def _format_live_request_plan(
+        self,
+        context: Dict[str, object],
+        image_paths: List[str],
+        vision_provider: Optional[ProviderConfig],
+    ) -> str:
+        if image_paths and self.current_provider.supports_vision:
+            vision_mode = "direct"
+        elif image_paths and vision_provider is not None:
+            vision_mode = f"fallback:{vision_provider.name}"
+        elif image_paths:
+            vision_mode = "unavailable"
+        else:
+            vision_mode = "not-needed"
         return json.dumps(
             {
                 "status": "waiting_for_model",
                 "provider": self.current_provider.name,
                 "model": self.current_provider.model,
                 "thinking": self.current_thinking_level,
+                "vision_mode": vision_mode,
                 "tools_available": ["create_node", "apply_code", "inspect_selection", "capture_viewport", "analyze_scene"],
                 "context": {
                     "hip": context.get("hip_file", ""),
@@ -820,6 +889,7 @@ class AgentSession(QtCore.QObject):
         self._add_event("收集上下文", self.adapter.describe_context(context), "running")
         self._start_model_call(
             prompt=self._build_agent_tool_prompt(prompt, context),
+            vision_prompt=prompt,
             system_prompt=self._build_system_prompt(context, prompt),
             image_paths=[],
             context=context,
@@ -924,6 +994,21 @@ class AgentSession(QtCore.QObject):
             f"Errors: {context.get('errors', [])}\n\n"
             f"User request:\n{user_text}"
         )
+
+    def _find_vision_fallback_provider(self, primary: ProviderConfig) -> Optional[ProviderConfig]:
+        for provider in self.providers:
+            if provider.name == primary.name:
+                continue
+            if provider.source == "mock":
+                continue
+            if not provider.supports_vision or not provider.use_as_vision_fallback:
+                continue
+            if provider.source != "codex" and (not provider.base_url.strip() or not provider.model.strip()):
+                continue
+            if not provider.has_key:
+                continue
+            return provider
+        return None
 
     def _provider_workdir(self, context: Dict[str, object]) -> str:
         hip_file = str(context.get("hip_file", "") or "").strip()

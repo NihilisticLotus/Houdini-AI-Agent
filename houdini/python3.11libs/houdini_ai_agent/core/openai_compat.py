@@ -75,6 +75,33 @@ def send_chat(
     return _extract_text(data)
 
 
+def describe_images(
+    provider: ProviderConfig,
+    user_text: str,
+    image_paths: Optional[Iterable[str]] = None,
+    response_language: str = "English",
+    timeout_seconds: int = 120,
+) -> str:
+    prompt = (
+        "You are the vision companion for a Houdini plugin.\n"
+        "Analyze the attached image or images for a downstream text-only agent.\n"
+        "Focus on Houdini-relevant information when visible: node graphs, selected nodes, parameter panes, "
+        "viewport content, on-screen error text, warnings, UI labels, geometry, and any actionable scene clues.\n"
+        "Be concrete and concise.\n"
+        f"Return the notes in {response_language}.\n\n"
+        f"User intent:\n{user_text or 'Describe the attached image(s) for the downstream agent.'}"
+    )
+    return send_chat(
+        provider=provider,
+        system_prompt="You are a precise multimodal image analysis assistant.",
+        user_text=prompt,
+        image_paths=image_paths or [],
+        thinking_level="中",
+        max_tokens=900,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def _post_json(endpoint: str, payload: Dict[str, object], headers: Dict[str, str], timeout_seconds: int) -> str:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(endpoint, data=body, headers=headers, method="POST")

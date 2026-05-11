@@ -50,6 +50,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.left_sidebar = self._build_session_sidebar()
         self.center_workspace = self._build_center_workspace()
         self.context_panel = ContextPanel()
+        self.context_panel.setObjectName("ContextPanel")
         self.context_panel.setMinimumWidth(290)
 
         self.main_splitter.addWidget(self.left_sidebar)
@@ -203,6 +204,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         layout.addWidget(self._build_composer_controls())
 
         self.trace = ExecutionTrace()
+        self.trace.setObjectName("ExecutionTrace")
         self.trace.setMinimumHeight(150)
         self.trace.setMaximumHeight(190)
         self.trace.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
