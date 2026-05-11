@@ -438,6 +438,10 @@ class AgentSession(QtCore.QObject):
         self._set_busy(True)
         self._active_task_id = uuid.uuid4().hex
         context = self.refresh_context()
+        if self.current_provider.source != "mock":
+            self._run_live_action(action, context)
+            return
+
         if action in {"create_nodes", "fix_error", "capture_viewport", "inspect_selection"}:
             if action == "create_nodes":
                 result = self.adapter.create_node_preview(self.current_thinking_level)
@@ -451,12 +455,6 @@ class AgentSession(QtCore.QObject):
             for event in result.get("events", []):
                 self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
             self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
-        elif self.current_provider.source == "codex" and action in {"analyze_scene"}:
-            self._run_live_action(action, context)
-            return
-        elif self.current_provider.source not in {"mock", "codex"} and action in {"analyze_scene"}:
-            self._run_live_action(action, context)
-            return
         else:
             if action == "analyze_scene":
                 result = self.adapter.analyze_scene(self.current_thinking_level)
@@ -802,57 +800,33 @@ class AgentSession(QtCore.QObject):
         self._active_worker = None
 
     def _run_live_action(self, action: str, context: Dict[str, object]) -> None:
-        language = self._preferred_response_language("")
         action_titles = {
             "analyze_scene": "分析工程",
             "inspect_selection": "查看选中节点",
+            "create_nodes": "创建节点",
             "fix_error": "修复错误分析",
             "capture_viewport": "视口分析",
         }
-        prompts = {
-            "analyze_scene": (
-                "Please analyze the current Houdini project context. "
-                "Summarize what the scene appears to be doing, identify notable nodes or risks, "
-                "and suggest the next 2-4 practical steps."
-            ),
-            "inspect_selection": (
-                "Please inspect the selected Houdini nodes based on the provided context. "
-                "Explain what the selection is likely responsible for, what to check next, "
-                "and any likely parameter areas worth adjusting."
-            ),
-            "fix_error": (
-                "Please analyze the current Houdini error and warning context. "
-                "Give a likely root cause, a concrete repair plan, and the safest validation steps. "
-                "Do not claim that the fix has already been executed."
-            ),
-            "capture_viewport": (
-                "Please analyze the current viewport context. "
-                "Describe what additional visual information would be useful, how to improve the view for diagnosis, "
-                "and what viewport or render checks the user should perform next."
-            ),
-        }
-        prompt = (
-            f"Respond in {language}. "
-            "The user triggered this from a Houdini toolbar button, so there is no typed user message. "
-            f"{prompts[action]}"
-        )
+        prompt = self._toolbar_action_request(action)
         title = action_titles.get(action, action)
         self._add_event(title, "Started from toolbar action using live provider.", "info")
         self._add_event("收集上下文", self.adapter.describe_context(context), "running")
-        if self.current_provider.source == "codex":
-            self._start_model_call(
-                prompt=self._build_codex_prompt(prompt, context, ""),
-                system_prompt=self._build_system_prompt(context, ""),
-                image_paths=[],
-                context=context,
-            )
-        else:
-            self._start_model_call(
-                prompt=prompt,
-                system_prompt=self._build_system_prompt(context, ""),
-                image_paths=[],
-                context=context,
-            )
+        self._start_model_call(
+            prompt=self._build_agent_tool_prompt(prompt, context),
+            system_prompt=self._build_system_prompt(context, prompt),
+            image_paths=[],
+            context=context,
+        )
+
+    def _toolbar_action_request(self, action: str) -> str:
+        requests = {
+            "analyze_scene": "用户点击了“分析工程”。请基于当前 Houdini 上下文分析工程结构、风险和下一步建议。通常不需要调用工具，除非你判断必须执行可用工具。",
+            "inspect_selection": "用户点击了“查看选中节点”。请基于当前 Houdini 上下文检查选中节点；如果需要读取选择信息，请调用 inspect_selection。",
+            "create_nodes": "用户点击了“创建节点”。请基于当前 Houdini 上下文判断是否应创建节点；如果缺少具体节点类型，请给出简短澄清，不要随意创建。",
+            "fix_error": "用户点击了“修复错误”。请分析当前选中节点和当前网络中的错误；如果可编辑代码参数可修复，请返回 apply_code action 写入完整修复代码并让插件执行。",
+            "capture_viewport": "用户点击了“捕获视口”。请判断是否需要捕获当前视口；如需要，请调用 capture_viewport。",
+        }
+        return requests.get(action, f"用户点击了工具栏动作：{action}。请基于当前 Houdini 上下文决定是否调用可用工具。")
 
     def _preferred_response_language(self, user_text: str = "") -> str:
         if user_text and re.search(r"[\u4e00-\u9fff]", user_text):
