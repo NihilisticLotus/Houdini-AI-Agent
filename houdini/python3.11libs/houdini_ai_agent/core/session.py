@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import uuid
 
+from houdini_ai_agent.core.codex_cli import CodexCallError, send_codex_chat
 from houdini_ai_agent.core.config import ProviderConfig, load_providers
 from houdini_ai_agent.core.openai_compat import ProviderCallError, build_reasoning_effort, send_chat
 from houdini_ai_agent.qt import QtCore
@@ -336,6 +337,22 @@ class AgentSession(QtCore.QObject):
                 image_paths=image_paths,
             )
             self._add_event("生成回复", "Preview response completed in mock mode.", "success")
+        elif self.current_provider.source == "codex":
+            try:
+                response = send_codex_chat(
+                    prompt=self._build_codex_prompt(text, context),
+                    image_paths=image_paths,
+                    model=self.current_provider.model,
+                    cwd=self._provider_workdir(context),
+                )
+                self._add_event(
+                    "生成回复",
+                    f"Local Codex reply received via {self.current_provider.model or 'default model'}.",
+                    "success",
+                )
+            except CodexCallError as exc:
+                response = f"Codex 调用失败：{exc}"
+                self._add_event("Codex 调用失败", str(exc), "error")
         else:
             try:
                 response = send_chat(
@@ -375,7 +392,9 @@ class AgentSession(QtCore.QObject):
             for event in result.get("events", []):
                 self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
             self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
-        elif self.current_provider.source != "mock" and action in {"analyze_scene"}:
+        elif self.current_provider.source == "codex" and action in {"analyze_scene"}:
+            self._run_live_action(action, context)
+        elif self.current_provider.source not in {"mock", "codex"} and action in {"analyze_scene"}:
             self._run_live_action(action, context)
         else:
             if action == "analyze_scene":
@@ -461,23 +480,36 @@ class AgentSession(QtCore.QObject):
         title = action_titles.get(action, action)
         self._add_event(title, "Started from toolbar action using live provider.", "info")
         self._add_event("收集上下文", self.adapter.describe_context(context), "running")
-        try:
-            response = send_chat(
-                provider=self.current_provider,
-                system_prompt=self._build_system_prompt(context),
-                user_text=prompts[action],
-                thinking_level=self.current_thinking_level,
-                max_tokens=1400,
-            )
-            self._add_event(
-                "生成回复",
-                f"Live provider response received via {self.current_provider.name} ({build_reasoning_effort(self.current_thinking_level)} reasoning).",
-                "success",
-            )
-            self._add_message("assistant", response)
-        except ProviderCallError as exc:
-            self._add_event("模型调用失败", str(exc), "error")
-            self._add_message("assistant", f"模型调用失败：{exc}")
+        if self.current_provider.source == "codex":
+            try:
+                response = send_codex_chat(
+                    prompt=self._build_codex_prompt(prompts[action], context),
+                    model=self.current_provider.model,
+                    cwd=self._provider_workdir(context),
+                )
+                self._add_event("生成回复", f"Local Codex reply received via {self.current_provider.model or 'default model'}.", "success")
+                self._add_message("assistant", response)
+            except CodexCallError as exc:
+                self._add_event("Codex 调用失败", str(exc), "error")
+                self._add_message("assistant", f"Codex 调用失败：{exc}")
+        else:
+            try:
+                response = send_chat(
+                    provider=self.current_provider,
+                    system_prompt=self._build_system_prompt(context),
+                    user_text=prompts[action],
+                    thinking_level=self.current_thinking_level,
+                    max_tokens=1400,
+                )
+                self._add_event(
+                    "生成回复",
+                    f"Live provider response received via {self.current_provider.name} ({build_reasoning_effort(self.current_thinking_level)} reasoning).",
+                    "success",
+                )
+                self._add_message("assistant", response)
+            except ProviderCallError as exc:
+                self._add_event("模型调用失败", str(exc), "error")
+                self._add_message("assistant", f"模型调用失败：{exc}")
 
     def _build_system_prompt(self, context: Dict[str, object]) -> str:
         selected_nodes = context.get("selected_nodes", [])
@@ -497,6 +529,28 @@ class AgentSession(QtCore.QObject):
             f"Viewport: {context.get('viewport', '')}\n"
             f"Summary: {context.get('summary', '')}\n"
         )
+
+    def _build_codex_prompt(self, user_text: str, context: Dict[str, object]) -> str:
+        return (
+            "You are Houdini AI Agent working inside SideFX Houdini.\n"
+            "Be concise, practical, and honest about what has and has not been executed.\n"
+            "Use the following Houdini context when answering.\n\n"
+            f"HIP: {context.get('hip_file', '')}\n"
+            f"Network: {context.get('network', '')}\n"
+            f"Selected nodes: {', '.join(context.get('selected_nodes', [])) or 'none'}\n"
+            f"Viewport: {context.get('viewport', '')}\n"
+            f"Scene summary: {context.get('summary', '')}\n"
+            f"Errors: {context.get('errors', [])}\n\n"
+            f"User request:\n{user_text}"
+        )
+
+    def _provider_workdir(self, context: Dict[str, object]) -> str:
+        hip_file = str(context.get("hip_file", "") or "").strip()
+        if hip_file and hip_file.lower() != "unknown":
+            path = Path(hip_file)
+            if path.exists():
+                return str(path.parent)
+        return str(Path.home())
 
     def _storage_dir(self) -> Optional[Path]:
         getter = getattr(self.adapter, "get_session_storage_dir", None)

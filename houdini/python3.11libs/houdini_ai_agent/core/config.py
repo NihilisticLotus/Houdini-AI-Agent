@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from houdini_ai_agent.core.codex_cli import find_codex_executable, has_codex_auth
+
 try:
     import tomllib
 except ImportError:  # pragma: no cover - Houdini 21 uses Python 3.11.
@@ -30,12 +32,18 @@ class ProviderConfig:
 
     @property
     def has_key(self) -> bool:
+        if self.source == "codex":
+            return has_codex_auth()
         return bool(self.api_key_env and os.environ.get(self.api_key_env))
 
     @property
     def status_text(self) -> str:
         if self.source == "mock":
             return "Preview mode"
+        if self.source == "codex":
+            if not find_codex_executable():
+                return "Codex missing"
+            return "Signed in" if self.has_key else "Codex login required"
         if not self.api_key_env:
             return "Missing key env"
         return "Ready" if self.has_key else f"Set {self.api_key_env}"
@@ -52,7 +60,17 @@ class ExternalConfigHint:
 
 
 def default_providers() -> List[ProviderConfig]:
+    codex_model = _read_codex_default_model()
     return [
+        ProviderConfig(
+            name="Codex Local",
+            base_url="codex://local-cli",
+            api_key_env="",
+            model=codex_model or "gpt-5.5",
+            supports_reasoning=True,
+            default_thinking_level="中",
+            source="codex",
+        ),
         ProviderConfig(
             name="Mock Preview",
             base_url="mock://local-preview",
@@ -141,3 +159,15 @@ def _read_claude_config(path: Path) -> ExternalConfigHint:
     model = str(data.get("model", "") or data.get("defaultModel", ""))
     provider = "anthropic" if model else ""
     return ExternalConfigHint("Claude", str(path), True, model=model, provider=provider, note="Detected")
+
+
+def _read_codex_default_model() -> str:
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    path = codex_home / "config.toml"
+    if not path.exists() or tomllib is None:
+        return ""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    return str(data.get("model", "") or data.get("model_name", ""))

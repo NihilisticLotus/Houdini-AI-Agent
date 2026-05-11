@@ -31,6 +31,9 @@ Houdini AI Agent 是一个基于 PySide、运行在 Houdini 21.0 内的面板插
   - 实时文本对话
   - 带图片的多模态提问
   - 部分分析类工具栏动作
+- 支持本机 `Codex Local` provider：
+  - 复用这台机器上已安装并已登录的 Codex CLI
+  - 不需要你在插件里手工填写 OpenAI API key
 
 ## 安装方式
 
@@ -72,7 +75,8 @@ Houdini AI Agent 是一个基于 PySide、运行在 Houdini 21.0 内的面板插
    - 会生成真实截图文件
    - 聊天区里会出现这张截图
 5. 选中一个带有明显代码拼写错误的节点，点击 `修复错误`，测试第一版自动修复流程。
-6. 在设置里配置 OpenAI-compatible provider，发送文本或图片消息，验证真实模型回复。
+6. 在模型栏选择 `Codex Local`，发送文本或图片消息，验证真实模型回复。
+7. 如果你有自己的 OpenAI-compatible provider，也可以在设置中额外配置。
 
 ## 会话保存机制
 
@@ -96,7 +100,8 @@ Houdini AI Agent 是一个基于 PySide、运行在 Houdini 21.0 内的面板插
 当前版本仍然以前端和交互为主，但已经不再是纯 mock：
 
 - `Mock Preview` 仍可作为安全预览模式使用
-- OpenAI-compatible provider 已可用于真实聊天和图片提问
+- `Codex Local` 已可直接复用本机 Codex 登录能力进行真实聊天和图片提问
+- OpenAI-compatible provider 仍作为可选高级配置保留
 - 会真正修改 Houdini 的工具动作目前仍以预演/建议为主
 - 自动分析错误并修复的执行链路还未接入
 

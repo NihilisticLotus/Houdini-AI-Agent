@@ -31,6 +31,9 @@ Houdini AI Agent is a Houdini panel plugin built with PySide for Houdini 21.0. T
   - live text chat
   - image-aware chat requests
   - live scene-analysis style actions
+- Local `Codex Local` provider support:
+  - reuses the Codex CLI installed and signed in on the same machine
+  - does not require manually entering an OpenAI API key in the plugin
 
 ## Installation
 
@@ -72,7 +75,8 @@ To verify the current milestone quickly inside Houdini:
    - a screenshot file is written
    - the screenshot appears in the chat area as an attached image
 5. Select a node with an obvious typo in a code/snippet parameter and click `修复错误` to test the first-pass auto-fix flow.
-6. Configure an OpenAI-compatible provider in Settings and send a text or image prompt to verify live model replies.
+6. Select `Codex Local` in the model bar and send a text or image prompt to verify live model replies.
+7. If you prefer, you can still configure an OpenAI-compatible provider in Settings as an optional advanced path.
 
 ## Session Storage
 
@@ -96,6 +100,7 @@ The panel supports importing and exporting conversations.
 The current build is still front-end first, but it is no longer fully mocked. Today:
 
 - `Mock Preview` remains available as a safe offline mode
+- `Codex Local` is now the preferred live-provider path when Codex CLI is installed and signed in
 - OpenAI-compatible providers can handle live chat and image-aware prompts
 - toolbar actions that would modify Houdini are still preview-only
 - automatic node repair logic is not connected yet

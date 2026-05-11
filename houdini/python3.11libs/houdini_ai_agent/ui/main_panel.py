@@ -506,7 +506,11 @@ class AgentMainPanel(QtWidgets.QWidget):
     def _update_provider_status(self) -> None:
         provider = self.session.current_provider
         self.provider_status.setText(provider.status_text)
-        if provider.source != "mock" and not provider.has_key:
+        if provider.source == "codex" and not provider.has_key:
+            self.provider_status.setToolTip("未检测到 Codex 本地登录状态。请先在这台机器上登录 Codex。")
+        elif provider.source == "codex":
+            self.provider_status.setToolTip("使用本机已登录的 Codex CLI，不需要单独填写 OpenAI API key。")
+        elif provider.source != "mock" and not provider.has_key:
             self.provider_status.setToolTip(
                 f"请在启动 Houdini 前设置环境变量 {provider.api_key_env}，"
                 "或者先切回 Mock Preview。"
