@@ -2,9 +2,8 @@
 
 ## Near Term
 
-- Connect real model providers for chat and tool planning
-- Add multimodal image understanding pipeline
-- Replace mock execution flow with structured task orchestration
+- Expand provider compatibility testing across OpenAI-compatible endpoints
+- Replace remaining mock execution flow with structured task orchestration
 - Expose Houdini actions for node creation, connection, and parameter editing
 - Improve viewport capture and scene-summary tooling
 

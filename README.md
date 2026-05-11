@@ -1,6 +1,6 @@
 # Houdini AI Agent
 
-Houdini AI Agent is a Houdini-native PySide panel plugin focused on keeping AI-assisted scene work inside Houdini. The current milestone delivers a polished front-end workspace with multi-session chat, image attachments, project-aware autosave, and a lightweight Houdini adapter for reading scene context.
+Houdini AI Agent is a Houdini-native PySide panel plugin focused on keeping AI-assisted scene work inside Houdini. The current milestone delivers a polished front-end workspace with multi-session chat, image attachments, project-aware autosave, a lightweight Houdini adapter for reading scene context, and first-pass support for OpenAI-compatible live model calls.
 
 ## Highlights
 
@@ -9,7 +9,7 @@ Houdini AI Agent is a Houdini-native PySide panel plugin focused on keeping AI-a
 - Per-session autosave under `$HIP/Agent`
 - Image paste and attachment workflow, including session import/export
 - Scene context panel for HIP, network, selection, viewport, and errors
-- Mock agent execution traces plus basic Houdini scene inspection
+- Mock-safe workflow plus OpenAI-compatible live text/image chat
 - Focus mode and collapsible sidebars for a more concentrated workspace
 
 ## Repository Layout
@@ -40,5 +40,5 @@ This repository is currently front-end first:
 
 - The UI, session system, image workflow, and Houdini package integration are in place.
 - The panel can read basic Houdini scene context when opened inside Houdini.
-- Real model API calls, tool execution orchestration, and automatic error repair are planned for the next milestone.
-
+- OpenAI-compatible providers can now answer chat requests and selected analysis actions.
+- Real node execution orchestration and automatic repair are still planned for the next milestone.

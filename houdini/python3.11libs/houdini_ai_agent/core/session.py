@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import uuid
 
 from houdini_ai_agent.core.config import ProviderConfig, load_providers
+from houdini_ai_agent.core.openai_compat import ProviderCallError, build_reasoning_effort, send_chat
 from houdini_ai_agent.qt import QtCore
 
 
@@ -325,14 +326,34 @@ class AgentSession(QtCore.QObject):
         if image_paths:
             self._add_event("读取图片输入", f"{len(image_paths)} image(s) attached for vision analysis.", "running")
 
-        response = self.adapter.mock_chat_response(
-            prompt=text,
-            thinking_level=self.current_thinking_level,
-            provider=self.current_provider.name,
-            context=context,
-            image_paths=image_paths,
-        )
-        self._add_event("生成回复", "Preview response completed. Real model and vision calls are planned for the next milestone.", "success")
+        response = ""
+        if self.current_provider.source == "mock":
+            response = self.adapter.mock_chat_response(
+                prompt=text,
+                thinking_level=self.current_thinking_level,
+                provider=self.current_provider.name,
+                context=context,
+                image_paths=image_paths,
+            )
+            self._add_event("生成回复", "Preview response completed in mock mode.", "success")
+        else:
+            try:
+                response = send_chat(
+                    provider=self.current_provider,
+                    system_prompt=self._build_system_prompt(context),
+                    user_text=text,
+                    image_paths=image_paths,
+                    thinking_level=self.current_thinking_level,
+                    max_tokens=1400,
+                )
+                self._add_event(
+                    "生成回复",
+                    f"Live provider response received via {self.current_provider.name} ({build_reasoning_effort(self.current_thinking_level)} reasoning).",
+                    "success",
+                )
+            except ProviderCallError as exc:
+                response = f"模型调用失败：{exc}"
+                self._add_event("模型调用失败", str(exc), "error")
         self._add_message("assistant", response)
         self.save_autosaved_conversations()
         self._set_busy(False)
@@ -340,24 +361,32 @@ class AgentSession(QtCore.QObject):
     def run_action(self, action: str) -> None:
         self._set_busy(True)
         self._active_task_id = uuid.uuid4().hex
-        if action == "analyze_scene":
-            result = self.adapter.analyze_scene(self.current_thinking_level)
-        elif action == "inspect_selection":
-            result = self.adapter.inspect_selection(self.current_thinking_level)
-        elif action == "create_nodes":
-            result = self.adapter.create_node_preview(self.current_thinking_level)
-        elif action == "fix_error":
-            result = self.adapter.fix_error_preview(self.current_thinking_level)
-        elif action == "capture_viewport":
-            result = self.adapter.capture_viewport_preview(self.current_thinking_level)
+        context = self.refresh_context()
+        if action in {"create_nodes", "fix_error", "capture_viewport", "inspect_selection"}:
+            if action == "create_nodes":
+                result = self.adapter.create_node_preview(self.current_thinking_level)
+            elif action == "fix_error":
+                result = self.adapter.fix_error_preview(self.current_thinking_level)
+            elif action == "inspect_selection":
+                result = self.adapter.inspect_selection(self.current_thinking_level)
+            else:
+                result = self.adapter.capture_viewport_preview(self.current_thinking_level)
+            self._add_event(result.get("title", action), "Started from toolbar action.", "info")
+            for event in result.get("events", []):
+                self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
+            self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
+        elif self.current_provider.source != "mock" and action in {"analyze_scene"}:
+            self._run_live_action(action, context)
         else:
-            result = {"title": "未知操作", "events": [], "message": "No action was run."}
+            if action == "analyze_scene":
+                result = self.adapter.analyze_scene(self.current_thinking_level)
+            else:
+                result = {"title": "未知操作", "events": [], "message": "No action was run."}
 
-        self.refresh_context()
-        self._add_event(result.get("title", action), "Started from toolbar action.", "info")
-        for event in result.get("events", []):
-            self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
-        self._add_message("assistant", result.get("message", "Done."))
+            self._add_event(result.get("title", action), "Started from toolbar action.", "info")
+            for event in result.get("events", []):
+                self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
+            self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
         self.save_autosaved_conversations()
         self._set_busy(False)
 
@@ -399,6 +428,75 @@ class AgentSession(QtCore.QObject):
         if self._busy != busy:
             self._busy = busy
             self.busy_changed.emit(busy)
+
+    def _run_live_action(self, action: str, context: Dict[str, object]) -> None:
+        action_titles = {
+            "analyze_scene": "分析工程",
+            "inspect_selection": "查看选中节点",
+            "fix_error": "修复错误分析",
+            "capture_viewport": "视口分析",
+        }
+        prompts = {
+            "analyze_scene": (
+                "Please analyze the current Houdini project context. "
+                "Summarize what the scene appears to be doing, identify notable nodes or risks, "
+                "and suggest the next 2-4 practical steps."
+            ),
+            "inspect_selection": (
+                "Please inspect the selected Houdini nodes based on the provided context. "
+                "Explain what the selection is likely responsible for, what to check next, "
+                "and any likely parameter areas worth adjusting."
+            ),
+            "fix_error": (
+                "Please analyze the current Houdini error and warning context. "
+                "Give a likely root cause, a concrete repair plan, and the safest validation steps. "
+                "Do not claim that the fix has already been executed."
+            ),
+            "capture_viewport": (
+                "Please analyze the current viewport context. "
+                "Describe what additional visual information would be useful, how to improve the view for diagnosis, "
+                "and what viewport or render checks the user should perform next."
+            ),
+        }
+        title = action_titles.get(action, action)
+        self._add_event(title, "Started from toolbar action using live provider.", "info")
+        self._add_event("收集上下文", self.adapter.describe_context(context), "running")
+        try:
+            response = send_chat(
+                provider=self.current_provider,
+                system_prompt=self._build_system_prompt(context),
+                user_text=prompts[action],
+                thinking_level=self.current_thinking_level,
+                max_tokens=1400,
+            )
+            self._add_event(
+                "生成回复",
+                f"Live provider response received via {self.current_provider.name} ({build_reasoning_effort(self.current_thinking_level)} reasoning).",
+                "success",
+            )
+            self._add_message("assistant", response)
+        except ProviderCallError as exc:
+            self._add_event("模型调用失败", str(exc), "error")
+            self._add_message("assistant", f"模型调用失败：{exc}")
+
+    def _build_system_prompt(self, context: Dict[str, object]) -> str:
+        selected_nodes = context.get("selected_nodes", [])
+        if isinstance(selected_nodes, list):
+            selected_summary = ", ".join(str(item) for item in selected_nodes[:8]) or "none"
+        else:
+            selected_summary = "none"
+        return (
+            "You are Houdini AI Agent, a helpful assistant working inside SideFX Houdini. "
+            "Be concise, practical, and action-oriented. "
+            "When the user attaches images, analyze them and relate them to Houdini workflows when relevant. "
+            "When discussing the current project, use the provided scene context. "
+            "Do not invent executed actions. If something is only a suggestion, say so clearly.\n\n"
+            f"HIP: {context.get('hip_file', '')}\n"
+            f"Network: {context.get('network', '')}\n"
+            f"Selected nodes: {selected_summary}\n"
+            f"Viewport: {context.get('viewport', '')}\n"
+            f"Summary: {context.get('summary', '')}\n"
+        )
 
     def _storage_dir(self) -> Optional[Path]:
         getter = getattr(self.adapter, "get_session_storage_dir", None)
