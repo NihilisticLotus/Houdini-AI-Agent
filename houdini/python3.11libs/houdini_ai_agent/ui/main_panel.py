@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from houdini_ai_agent.adapters.houdini import create_best_adapter
-from houdini_ai_agent.core.config import looks_like_direct_key
+from houdini_ai_agent.core.config import CODEX_MODELS, looks_like_direct_key
 from houdini_ai_agent.core.session import AgentSession, THINKING_LEVELS
 from houdini_ai_agent.ui.chat_view import ChatView
 from houdini_ai_agent.ui.context_panel import ContextPanel, ExecutionTrace
@@ -221,8 +221,12 @@ class AgentMainPanel(QtWidgets.QWidget):
         left.setSpacing(8)
         left.addWidget(QtWidgets.QLabel("模型"))
         self.provider_combo = QtWidgets.QComboBox()
-        self.provider_combo.setMinimumWidth(230)
+        self.provider_combo.setMinimumWidth(150)
         left.addWidget(self.provider_combo)
+        self.model_combo = QtWidgets.QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setMinimumWidth(170)
+        left.addWidget(self.model_combo)
         self.provider_status = QtWidgets.QLabel("")
         self.provider_status.setMinimumWidth(84)
         self.provider_status.setObjectName("StatusPill")
@@ -267,6 +271,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.storage_status_changed.connect(self._set_storage_status)
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
+        self.model_combo.currentTextChanged.connect(self._model_changed)
         self.thinking_combo.currentTextChanged.connect(self._thinking_changed)
 
     def _add_action_button(self, layout, label: str, action: str) -> None:
@@ -487,9 +492,10 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.provider_combo.blockSignals(True)
         self.provider_combo.clear()
         for provider in self.session.providers:
-            self.provider_combo.addItem(f"{provider.name} / {provider.model}", provider)
+            self.provider_combo.addItem(provider.name, provider)
         self.provider_combo.setCurrentIndex(self.session.current_provider_index)
         self.provider_combo.blockSignals(False)
+        self._populate_model_combo()
         self._update_provider_status()
         self.adapter_label.setText(f"Adapter: {self.session.adapter.name}")
 
@@ -498,6 +504,37 @@ class AgentMainPanel(QtWidgets.QWidget):
 
     def _provider_changed(self, index: int) -> None:
         self.session.set_provider_index(index)
+        self._populate_model_combo()
+        self._update_provider_status()
+
+    def _populate_model_combo(self) -> None:
+        if not hasattr(self, "model_combo"):
+            return
+        provider = self.session.current_provider
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        if provider.source == "codex":
+            values = []
+            for label, value, description in CODEX_MODELS:
+                self.model_combo.addItem(label, value)
+                self.model_combo.setItemData(self.model_combo.count() - 1, description, QtCore.Qt.ToolTipRole)
+                values.append(value)
+            if provider.model not in values and provider.model:
+                self.model_combo.addItem(provider.model, provider.model)
+            index = values.index(provider.model) if provider.model in values else self.model_combo.findData(provider.model)
+            self.model_combo.setCurrentIndex(index if index >= 0 else 0)
+        else:
+            self.model_combo.addItem(provider.model or "", provider.model or "")
+            self.model_combo.setCurrentText(provider.model or "")
+        self.model_combo.blockSignals(False)
+
+    def _model_changed(self, text: str) -> None:
+        if not text:
+            return
+        data = self.model_combo.currentData()
+        model = str(data or text).strip()
+        if model:
+            self.session.set_current_model(model)
         self._update_provider_status()
 
     def _thinking_changed(self, level: str) -> None:

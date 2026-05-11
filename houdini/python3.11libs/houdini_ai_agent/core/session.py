@@ -378,6 +378,13 @@ class AgentSession(QtCore.QObject):
     def set_provider_index(self, index: int) -> None:
         self.current_provider_index = index
 
+    def set_current_model(self, model: str) -> None:
+        model = model.strip()
+        if not model:
+            return
+        self.current_provider.model = model
+        self.providers_changed.emit(self.providers)
+
     def set_thinking_level(self, level: str) -> None:
         if level in THINKING_LEVELS:
             self.current_thinking_level = level

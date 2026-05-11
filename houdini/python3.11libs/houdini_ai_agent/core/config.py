@@ -18,6 +18,17 @@ except ImportError:  # pragma: no cover - Houdini 21 uses Python 3.11.
 
 APP_CONFIG_DIR = Path.home() / ".houdini_ai_agent"
 APP_CONFIG_PATH = APP_CONFIG_DIR / "config.json"
+CODEX_MODELS = [
+    ("GPT-5.5", "gpt-5.5", "最新前沿模型，能力进一步增强"),
+    ("GPT-5.4", "gpt-5.4", "最新前沿模型，能力进一步增强"),
+    ("GPT-5.2-Codex", "gpt-5.2-codex", "前沿智能编程模型"),
+    ("GPT-5.1-Codex-Max", "gpt-5.1-codex-max", "针对 Codex 优化的模型，深度与快速推理兼备"),
+    ("GPT-5.4-Mini", "gpt-5.4-mini", "更轻量的前沿智能编程模型"),
+    ("GPT-5.3-Codex", "gpt-5.3-codex", "最新前沿智能编程模型，能力全面增强"),
+    ("GPT-5.3-Codex-Spark", "gpt-5.3-codex-spark", "超高速编程模型"),
+    ("GPT-5.2", "gpt-5.2", "针对专业工作与长程任务优化"),
+    ("GPT-5.1-Codex-Mini", "gpt-5.1-codex-mini", "针对 Codex 优化，更轻量、更快、但性能较弱"),
+]
 
 
 def resolve_api_key(value: str) -> str:
