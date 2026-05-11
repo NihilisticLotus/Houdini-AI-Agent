@@ -382,12 +382,6 @@ class AgentSession(QtCore.QObject):
         if image_paths:
             self._add_event("读取图片输入", f"{len(image_paths)} image(s) attached for vision analysis.", "running")
 
-        if not image_paths and self._run_tool_intent_from_text(text):
-            self.save_autosaved_conversations()
-            if self._active_thread is None:
-                self._set_busy(False)
-            return
-
         if self.current_provider.source == "mock":
             response = self.adapter.mock_chat_response(
                 prompt=text,
@@ -402,7 +396,7 @@ class AgentSession(QtCore.QObject):
             self._set_busy(False)
             return
 
-        prompt = self._build_codex_prompt(text, context) if self.current_provider.source == "codex" else text
+        prompt = self._build_agent_tool_prompt(text, context)
         self._start_model_call(
             prompt=prompt,
             system_prompt=self._build_system_prompt(context),
@@ -617,14 +611,95 @@ class AgentSession(QtCore.QObject):
         if task_id != self._active_task_id:
             return
         self._add_event(event_title, event_detail, status)
-        self._add_message("assistant", response)
         if status == "success":
-            self._apply_pending_model_fix(response)
+            if not self._execute_model_action_response(response):
+                self._add_message("assistant", response)
+                self._apply_pending_model_fix(response)
         else:
+            self._add_message("assistant", response)
             self._pending_model_fix_context = None
         self.save_autosaved_conversations()
         self._active_task_id = None
         self._set_busy(False)
+
+    def _execute_model_action_response(self, response: str) -> bool:
+        payload = self._extract_model_json(response)
+        if not payload:
+            return False
+        actions = payload.get("actions", [])
+        if isinstance(payload.get("action"), str):
+            actions = [payload]
+        if not isinstance(actions, list) or not actions:
+            reply = str(payload.get("response", "") or "").strip()
+            if reply:
+                self._add_message("assistant", reply)
+                return True
+            return False
+
+        reply_parts: List[str] = []
+
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            result = self._execute_model_action(action)
+            self._add_event(result.get("title", "Model action"), "Selected by model plan.", "info")
+            for event in result.get("events", []):
+                self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
+            message = str(result.get("message", "") or "").strip()
+            if message:
+                reply_parts.append(message)
+            self.refresh_context()
+
+        self._add_message("assistant", "\n\n".join(reply_parts) if reply_parts else "Action completed.")
+        return True
+
+    def _execute_model_action(self, action: Dict[str, object]) -> Dict[str, object]:
+        name = str(action.get("action", "") or "").strip().lower()
+        if name == "create_node":
+            creator = getattr(self.adapter, "create_node", None)
+            if creator is None:
+                return {"title": "Create node", "events": [], "message": "Current adapter cannot create nodes."}
+            return creator(
+                str(action.get("node_type", "") or "null"),
+                str(action.get("node_name", "") or ""),
+                str(action.get("parent_path", "") or ""),
+            )
+        if name == "apply_code":
+            applier = getattr(self.adapter, "apply_code_to_fix_target", None)
+            if applier is None:
+                return {"title": "Apply code", "events": [], "message": "Current adapter cannot apply code edits."}
+            fix_context = {
+                "target_node": str(action.get("target_node", "") or ""),
+                "code_parm": str(action.get("code_parm", "") or "snippet"),
+            }
+            return applier(fix_context, str(action.get("code", "") or ""))
+        if name == "inspect_selection":
+            return self.adapter.inspect_selection(self.current_thinking_level)
+        if name == "capture_viewport":
+            return self.adapter.capture_viewport_preview(self.current_thinking_level)
+        if name == "analyze_scene":
+            return self.adapter.analyze_scene(self.current_thinking_level)
+        return {
+            "title": "Unknown model action",
+            "events": [{"title": "Unsupported action", "detail": name or "<empty>", "status": "warning"}],
+            "message": f"The model requested an unsupported action: `{name}`.",
+        }
+
+    def _extract_model_json(self, text: str) -> Dict[str, object]:
+        candidates = []
+        for match in re.finditer(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE):
+            candidates.append(match.group(1).strip())
+        stripped = text.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            candidates.append(stripped)
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                return payload
+        return {}
 
     def _apply_pending_model_fix(self, response: str) -> None:
         fix_context = self._pending_model_fix_context
@@ -720,6 +795,35 @@ class AgentSession(QtCore.QObject):
             f"Selected nodes: {selected_summary}\n"
             f"Viewport: {context.get('viewport', '')}\n"
             f"Summary: {context.get('summary', '')}\n"
+        )
+
+    def _build_agent_tool_prompt(self, user_text: str, context: Dict[str, object]) -> str:
+        fix_context = self._error_fix_context()
+        return (
+            "You are controlling a Houdini plugin that can execute a small set of real HOM tools.\n"
+            "First decide from the user's request and scene context whether a tool should be executed.\n"
+            "If a tool should run, return ONLY one fenced JSON object and no prose outside it.\n"
+            "If no tool should run, return ONLY one fenced JSON object with an empty actions array and a concise response.\n\n"
+            "JSON schema:\n"
+            "{\n"
+            '  "response": "short user-facing text, or empty string when the tool result is enough",\n'
+            '  "actions": [\n'
+            '    {"action": "create_node", "node_type": "box|grid|sphere|null|attribwrangle|...", "node_name": "", "parent_path": ""},\n'
+            '    {"action": "apply_code", "target_node": "/obj/geo1/attribwrangle1", "code_parm": "snippet", "code": "full replacement code"},\n'
+            '    {"action": "inspect_selection"},\n'
+            '    {"action": "capture_viewport"},\n'
+            '    {"action": "analyze_scene"}\n'
+            "  ]\n"
+            "}\n\n"
+            "Rules:\n"
+            "- For creation requests, choose the actual Houdini node type from intent. Examples: box -> box, plane/planar surface -> grid, sphere -> sphere.\n"
+            "- For error repair, inspect the provided error/code context and return apply_code with the full corrected snippet when the target/code parameter is editable.\n"
+            "- Do not say the plugin has no executable tools. Use actions when a tool matches.\n"
+            "- Do not wrap code in Markdown inside the JSON; put the raw replacement string in the code field.\n"
+            "- Prefer one action unless the user explicitly requests multiple operations.\n\n"
+            f"User request: {user_text}\n"
+            f"Scene context: {json.dumps(context, ensure_ascii=False)}\n"
+            f"Editable error/code context: {json.dumps(fix_context, ensure_ascii=False)}\n"
         )
 
     def _build_codex_prompt(self, user_text: str, context: Dict[str, object]) -> str:

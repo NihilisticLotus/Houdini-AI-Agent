@@ -36,7 +36,18 @@ class HoudiniAdapter(MockHoudiniAdapter):
         selected_paths = [node.path() for node in selected]
         current_network = self._current_network().path()
         errors: List[Dict[str, str]] = []
-        for node in selected:
+        error_nodes = list(selected)
+        try:
+            current_network_node = self._current_network()
+            error_nodes.extend(current_network_node.children())
+            error_nodes.extend(current_network_node.allSubChildren())
+        except Exception:
+            pass
+        seen_error_nodes = set()
+        for node in error_nodes:
+            if node.path() in seen_error_nodes:
+                continue
+            seen_error_nodes.add(node.path())
             for message in node.errors():
                 errors.append({"node": node.path(), "message": message, "severity": "error"})
             for message in node.warnings():
@@ -176,6 +187,54 @@ class HoudiniAdapter(MockHoudiniAdapter):
             "title": "创建节点",
             "events": events,
             "message": f"已创建节点：`{created_node.path()}`" if created_node is not None else "没有创建任何节点。",
+        }
+
+    def create_node(self, node_type: str, node_name: str = "", parent_path: str = "") -> Dict[str, object]:
+        hou = self.hou
+        node_type = (node_type or "null").strip()
+        node_name = (node_name or "").strip()
+        parent_path = (parent_path or "").strip()
+        events: List[Dict[str, str]] = []
+        created_node = None
+        try:
+            with hou.undos.group("Houdini AI Agent Create Node"):
+                selected = hou.selectedNodes()
+                parent = hou.node(parent_path) if parent_path else None
+                if parent is None:
+                    parent = selected[-1].parent() if selected else self._current_network()
+
+                if parent.childTypeCategory().name() == "Object" and node_type != "geo":
+                    geo = parent.createNode("geo", node_name=node_name or f"agent_{node_type}_geo")
+                    file_node = geo.node("file1")
+                    if file_node is not None:
+                        try:
+                            file_node.destroy()
+                        except Exception:
+                            pass
+                    created_node = geo.createNode(node_type, node_name=f"agent_{node_type}1")
+                    geo.layoutChildren()
+                    geo.moveToGoodPosition()
+                    events.append({"title": "Create geometry container", "detail": geo.path(), "status": "success"})
+                else:
+                    created_node = parent.createNode(node_type, node_name=node_name or f"agent_{node_type}1")
+                    parent.layoutChildren()
+
+                created_node.setDisplayFlag(True)
+                created_node.setRenderFlag(True)
+                created_node.moveToGoodPosition()
+                created_node.setSelected(True, clear_all_selected=True)
+                events.append({"title": "Create node", "detail": f"{created_node.path()} ({node_type})", "status": "success"})
+        except Exception as exc:
+            return {
+                "title": "Create node",
+                "events": events + [{"title": "Create failed", "detail": str(exc), "status": "error"}],
+                "message": f"Create node failed: {exc}",
+            }
+
+        return {
+            "title": "Create node",
+            "events": events,
+            "message": f"Created node: `{created_node.path()}`" if created_node is not None else "No node was created.",
         }
 
     def fix_error_preview(self, thinking_level: str) -> Dict[str, object]:
@@ -356,10 +415,12 @@ class HoudiniAdapter(MockHoudiniAdapter):
 
     def error_fix_context(self) -> Dict[str, object]:
         selected = self.hou.selectedNodes()
-        if not selected:
-            return {"ok": False, "message": "No selected node."}
-        selected_node = selected[-1]
-        node = self._find_fix_target(selected_node) or selected_node
+        selected_node = selected[-1] if selected else None
+        node = self._find_fix_target(selected_node) if selected_node is not None else None
+        if node is None:
+            node = self._find_first_error_node()
+        if node is None:
+            return {"ok": False, "message": "No editable error node found in the current context."}
         parm = self._find_code_parm(node)
         code = ""
         if parm is not None:
@@ -372,7 +433,7 @@ class HoudiniAdapter(MockHoudiniAdapter):
                     code = ""
         return {
             "ok": True,
-            "selected_node": selected_node.path(),
+            "selected_node": selected_node.path() if selected_node is not None else "",
             "target_node": node.path(),
             "target_type": node.type().nameWithCategory(),
             "code_parm": parm.name() if parm is not None else "",
@@ -445,6 +506,22 @@ class HoudiniAdapter(MockHoudiniAdapter):
                 if candidate.errors() or candidate.warnings():
                     if self._find_code_parm(candidate) is not None:
                         return candidate
+            except Exception:
+                continue
+        return None
+
+    def _find_first_error_node(self):
+        candidates = []
+        try:
+            network = self._current_network()
+            candidates.extend(network.children())
+            candidates.extend(network.allSubChildren())
+        except Exception:
+            return None
+        for candidate in candidates:
+            try:
+                if (candidate.errors() or candidate.warnings()) and self._find_code_parm(candidate) is not None:
+                    return candidate
             except Exception:
                 continue
         return None
