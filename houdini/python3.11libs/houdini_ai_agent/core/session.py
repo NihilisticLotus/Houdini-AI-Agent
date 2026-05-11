@@ -34,6 +34,17 @@ THINKING_LEVELS: Dict[str, Dict[str, str]] = {
 }
 
 
+def provider_can_read_images(provider: ProviderConfig) -> bool:
+    if not provider.supports_vision:
+        return False
+    if provider.source == "codex":
+        return True
+    model = (provider.model or provider.name or "").lower()
+    if "glm-5.1" in model and not any(token in model for token in ("vision", "vl", "-v", "v-")):
+        return False
+    return True
+
+
 LEGACY_SESSION_FILE_NAME = "houdini_ai_agent_sessions.json"
 SESSION_INDEX_FILE_NAME = "session_index.json"
 SESSIONS_DIR_NAME = "sessions"
@@ -110,7 +121,7 @@ class ModelCallWorker(QtCore.QObject):
         try:
             prompt = self.prompt
             image_paths = list(self.image_paths)
-            if image_paths and not self.provider.supports_vision:
+            if image_paths and not provider_can_read_images(self.provider):
                 if self.vision_provider is not None:
                     self.progress.emit(
                         "Vision fallback",
@@ -561,7 +572,7 @@ class AgentSession(QtCore.QObject):
             self._set_busy(False)
             return
 
-        prompt = self._build_agent_tool_prompt(text, context)
+        prompt = self._build_agent_tool_prompt(text, context, has_images=bool(image_paths))
         self._start_model_call(
             prompt=prompt,
             vision_prompt=text,
@@ -793,7 +804,7 @@ class AgentSession(QtCore.QObject):
         image_paths: List[str],
         vision_provider: Optional[ProviderConfig],
     ) -> str:
-        if image_paths and self.current_provider.supports_vision:
+        if image_paths and provider_can_read_images(self.current_provider):
             vision_text = "\u5f53\u524d\u6a21\u578b\u76f4\u63a5\u8bfb\u56fe"
         elif image_paths and vision_provider is not None:
             vision_text = f"\u5148\u7531 {vision_provider.name} \u8bfb\u56fe\uff0c\u518d\u4ea4\u7ed9\u5f53\u524d\u6a21\u578b\u7ee7\u7eed\u5206\u6790"
@@ -803,15 +814,17 @@ class AgentSession(QtCore.QObject):
             vision_text = "\u672c\u8f6e\u6ca1\u6709\u56fe\u7247\u8f93\u5165"
         selected = context.get("selected_nodes", []) or []
         errors = context.get("errors", []) or []
+        _unknown = "\u672a\u77e5"
+        _none = "\u65e0"
         lines = [
-            "\u6b63\u5728\u5904\u7406\u8fd9\u6761\u8bf7\u6c42",
-            "1. \u6536\u96c6\u5f53\u524d Houdini \u4e0a\u4e0b\u6587",
-            f"2. \u56fe\u7247\u7b56\u7565\uff1a{vision_text}",
-            "3. \u5224\u65ad\u662f\u5426\u9700\u8981\u8c03\u7528 Houdini \u5de5\u5177",
-            f"\u5f53\u524d\u7f51\u7edc\uff1a{context.get('network', '') or '\u672a\u77e5'}",
-            f"\u9009\u4e2d\u8282\u70b9\uff1a{', '.join(selected[:3]) if selected else '\u65e0'}",
-            f"\u9519\u8bef\u6570\u91cf\uff1a{len(errors)}",
-            f"\u56fe\u7247\u6570\u91cf\uff1a{len(image_paths)}",
+            "已开始",
+            "正在收集 Houdini 上下文",
+            f"已读取当前网络：{context.get('network', '') or _unknown}",
+            f"已读取选中节点：{', '.join(selected[:3]) if selected else _none}",
+            f"已收集错误信息：{len(errors)} 条",
+            f"已接收图片：{len(image_paths)} 张",
+            f"图片处理：{vision_text}",
+            "正在等待模型判断是否需要调用 Houdini 工具",
         ]
         return "\n".join(lines)
 
@@ -867,25 +880,28 @@ class AgentSession(QtCore.QObject):
         actions = payload.get("actions", [])
         if isinstance(payload.get("action"), str):
             actions = [payload]
-        lines = ["\u6a21\u578b\u5df2\u5b8c\u6210\u672c\u8f6e\u5224\u65ad"]
+        lines = ["已处理模型回复"]
         if response:
-            lines.append(f"\u7ed3\u8bba\uff1a{response}")
+            lines.append(f"模型摘要：{response}")
         if isinstance(actions, list) and actions:
-            lines.append("\u8ba1\u5212\u6267\u884c\uff1a")
+            lines.append("准备执行工具动作：")
             for index, action in enumerate(actions, 1):
                 if not isinstance(action, dict):
                     continue
                 lines.append(f"{index}. {self._summarize_model_action(action)}")
         else:
-            lines.append("\u672c\u8f6e\u4e0d\u9700\u8981\u989d\u5916\u7684 Houdini \u5de5\u5177\u52a8\u4f5c")
+            lines.append("本轮没有工具动作")
         return "\n".join(lines)
 
     def _summarize_model_action(self, action: Dict[str, object]) -> str:
         name = str(action.get("action", "") or "").strip().lower()
+        _node = "\u8282\u70b9"
+        _cur_net = "\u5f53\u524d\u7f51\u7edc"
+        _tgt_node = "\u76ee\u6807\u8282\u70b9"
         if name == "create_node":
-            return f"\u521b\u5efa {action.get('node_type', '\u8282\u70b9')}\uff0c\u4f4d\u7f6e\uff1a{action.get('parent_path', '') or '\u5f53\u524d\u7f51\u7edc'}"
+            return f"\u521b\u5efa {action.get('node_type', _node)}\uff0c\u4f4d\u7f6e\uff1a{action.get('parent_path', '') or _cur_net}"
         if name == "apply_code":
-            return f"\u628a\u4ee3\u7801\u5199\u5165 {action.get('target_node', '') or '\u76ee\u6807\u8282\u70b9'} / {action.get('code_parm', 'snippet')}"
+            return f"\u628a\u4ee3\u7801\u5199\u5165 {action.get('target_node', '') or _tgt_node} / {action.get('code_parm', 'snippet')}"
         if name == "inspect_selection":
             return "\u68c0\u67e5\u5f53\u524d\u9009\u4e2d\u8282\u70b9"
         if name == "capture_viewport":
@@ -1045,12 +1061,19 @@ class AgentSession(QtCore.QObject):
             f"Summary: {context.get('summary', '')}\n"
         )
 
-    def _build_agent_tool_prompt(self, user_text: str, context: Dict[str, object]) -> str:
+    def _build_agent_tool_prompt(self, user_text: str, context: Dict[str, object], has_images: bool = False) -> str:
         fix_context = self._error_fix_context()
         language = self._preferred_response_language(user_text)
+        image_instruction = ""
+        if has_images:
+            image_instruction = (
+                "The user attached image files to this request. Analyze the attached image content before deciding whether a Houdini tool is needed. "
+                "If you cannot access the image, return a concise response saying the image transport failed instead of pretending no image was attached.\n"
+            )
         return (
             "You are controlling a Houdini plugin that can execute a small set of real HOM tools.\n"
             "First decide from the user's request and scene context whether a tool should be executed.\n"
+            f"{image_instruction}"
             "If a tool should run, return ONLY one fenced JSON object and no prose outside it.\n"
             "If no tool should run, return ONLY one fenced JSON object with an empty actions array and a concise response.\n\n"
             "JSON schema:\n"
@@ -1103,7 +1126,7 @@ class AgentSession(QtCore.QObject):
                 continue
             if provider.source == "mock":
                 continue
-            if not provider.supports_vision:
+            if not provider_can_read_images(provider):
                 continue
             if provider.source != "codex" and (not provider.base_url.strip() or not provider.model.strip()):
                 continue
@@ -1313,15 +1336,27 @@ class AgentSession(QtCore.QObject):
                 continue
             try:
                 target_dir.mkdir(parents=True, exist_ok=True)
+                image_suffix = path.suffix or self._detect_image_suffix(path) or ".png"
+                source_name = path.name if path.suffix else f"{path.name}{image_suffix}"
                 try:
                     if target_dir.resolve() in path.resolve().parents:
-                        materialized.append(str(path))
+                        if path.suffix:
+                            materialized.append(str(path))
+                        else:
+                            target = self._unique_path(target_dir / source_name)
+                            shutil.copy2(str(path), str(target))
+                            materialized.append(str(target))
                         continue
                 except Exception:
                     if target_dir in path.parents:
-                        materialized.append(str(path))
+                        if path.suffix:
+                            materialized.append(str(path))
+                        else:
+                            target = self._unique_path(target_dir / source_name)
+                            shutil.copy2(str(path), str(target))
+                            materialized.append(str(target))
                         continue
-                target = self._unique_path(target_dir / path.name)
+                target = self._unique_path(target_dir / source_name)
                 shutil.copy2(str(path), str(target))
                 materialized.append(str(target))
             except Exception:
@@ -1330,6 +1365,25 @@ class AgentSession(QtCore.QObject):
             self.storage_status = f"图片已更新到：{target_dir}"
             self.storage_status_changed.emit(self.storage_status)
         return materialized
+
+    def _detect_image_suffix(self, path: Path) -> str:
+        try:
+            header = path.read_bytes()[:16]
+        except OSError:
+            return ""
+        if header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if header.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
+            return ".gif"
+        if header.startswith(b"BM"):
+            return ".bmp"
+        if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            return ".webp"
+        if header.startswith(b"II*\x00") or header.startswith(b"MM\x00*"):
+            return ".tiff"
+        return ""
 
     def _image_dir(self, conversation_id: str) -> Path:
         storage_dir = self._storage_dir()

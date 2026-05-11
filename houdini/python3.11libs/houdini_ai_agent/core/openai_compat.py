@@ -156,12 +156,32 @@ def _image_to_data_url(path: Path) -> Optional[str]:
     if not path.exists() or not path.is_file():
         return None
     mime_type, _ = mimetypes.guess_type(str(path))
-    mime_type = mime_type or "application/octet-stream"
+    mime_type = mime_type or _detect_image_mime(path) or "application/octet-stream"
     try:
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     except OSError:
         return None
     return f"data:{mime_type};base64,{encoded}"
+
+
+def _detect_image_mime(path: Path) -> str:
+    try:
+        header = path.read_bytes()[:16]
+    except OSError:
+        return ""
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
+        return "image/gif"
+    if header.startswith(b"BM"):
+        return "image/bmp"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    if header.startswith(b"II*\x00") or header.startswith(b"MM\x00*"):
+        return "image/tiff"
+    return ""
 
 
 def _extract_text(data: Dict[str, object]) -> str:
