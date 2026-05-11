@@ -7,7 +7,6 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-import time
 from typing import Iterable, Optional
 
 
@@ -69,14 +68,15 @@ def send_codex_chat(
     ]
     if model.strip():
         cmd.extend(["-m", model.strip()])
+    cmd.append("-")
     for image_path in image_paths or []:
         prepared = _prepare_image_for_cli(Path(image_path))
         cmd.extend(["--image", str(prepared)])
-    cmd.append(prompt)
 
     process = subprocess.Popen(
         cmd,
         cwd=cwd or str(Path.home()),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -85,18 +85,21 @@ def send_codex_chat(
     )
     if process_holder is not None:
         process_holder["process"] = process
-    started = time.monotonic()
-    while process.poll() is None:
-        if cancel_event is not None and cancel_event.is_set():
-            _terminate_process(process)
-            raise CodexCallError("Codex request was stopped.")
-        if time.monotonic() - started > timeout_seconds:
-            _terminate_process(process)
-            raise CodexCallError(f"Codex CLI timed out after {timeout_seconds} seconds.")
-        time.sleep(0.1)
-    stdout, stderr = process.communicate()
-    if process_holder is not None:
-        process_holder.pop("process", None)
+    try:
+        stdout, stderr = process.communicate(input=prompt, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process(process)
+        try:
+            stdout, stderr = process.communicate(timeout=5)
+        except Exception:
+            stdout, stderr = "", ""
+        raise CodexCallError(f"Codex CLI timed out after {timeout_seconds} seconds.") from exc
+    finally:
+        if process_holder is not None:
+            process_holder.pop("process", None)
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise CodexCallError("Codex request was stopped.")
     if process.returncode != 0:
         detail = (stderr or stdout or "").strip()
         raise CodexCallError(detail or f"Codex CLI exited with code {process.returncode}.")
