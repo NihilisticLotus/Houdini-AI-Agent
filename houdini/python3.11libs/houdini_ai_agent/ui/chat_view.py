@@ -25,7 +25,7 @@ class MessageBubble(QtWidgets.QFrame):
         self.setProperty("role", role)
         self.message_index = message_index
 
-        role_label = "You" if role == "user" else ("Thought" if role == "thought" else "Agent")
+        role_label = "You" if role == "user" else ("思考" if role == "thought" else "Agent")
         header = QtWidgets.QLabel(f"{role_label}  {timestamp}")
         header.setObjectName("MessageHeader")
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 from urllib import error, request
 
+from houdini_ai_agent.core.codex_cli import send_codex_chat
 from houdini_ai_agent.core.config import ProviderConfig, looks_like_direct_key, resolve_api_key
 
 
@@ -19,10 +20,10 @@ class ProviderCallError(RuntimeError):
 
 def build_reasoning_effort(thinking_level: str) -> str:
     mapping = {
-        "低": "low",
-        "中": "medium",
-        "高": "high",
-        "超高": "high",
+        "\u4f4e": "low",
+        "\u4e2d": "medium",
+        "\u9ad8": "high",
+        "\u8d85\u9ad8": "high",
     }
     return mapping.get(thinking_level, "medium")
 
@@ -81,6 +82,9 @@ def describe_images(
     image_paths: Optional[Iterable[str]] = None,
     response_language: str = "English",
     timeout_seconds: int = 120,
+    cwd: Optional[str] = None,
+    cancel_event=None,
+    process_holder: Optional[dict] = None,
 ) -> str:
     prompt = (
         "You are the vision companion for a Houdini plugin.\n"
@@ -91,12 +95,22 @@ def describe_images(
         f"Return the notes in {response_language}.\n\n"
         f"User intent:\n{user_text or 'Describe the attached image(s) for the downstream agent.'}"
     )
+    if provider.source == "codex":
+        return send_codex_chat(
+            prompt=prompt,
+            image_paths=image_paths or [],
+            model=provider.model,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            cancel_event=cancel_event,
+            process_holder=process_holder,
+        )
     return send_chat(
         provider=provider,
         system_prompt="You are a precise multimodal image analysis assistant.",
         user_text=prompt,
         image_paths=image_paths or [],
-        thinking_level="中",
+        thinking_level="\u4e2d",
         max_tokens=900,
         timeout_seconds=timeout_seconds,
     )

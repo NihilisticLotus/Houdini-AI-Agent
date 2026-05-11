@@ -27,11 +27,12 @@ from houdini_ai_agent.qt import QtCore
 
 
 THINKING_LEVELS: Dict[str, Dict[str, str]] = {
-    "低": {"effort": "low", "description": "快速、省 token，适合小操作"},
-    "中": {"effort": "medium", "description": "默认档，适合常规工程解释"},
-    "高": {"effort": "high", "description": "适合错误分析和多步操作"},
-    "超高": {"effort": "xhigh", "description": "适合复杂诊断和自动修复"},
+    "\u4f4e": {"effort": "low", "description": "\u66f4\u5feb\u3001\u66f4\u7701 token\uff0c\u9002\u5408\u5c0f\u578b\u64cd\u4f5c"},
+    "\u4e2d": {"effort": "medium", "description": "\u9ed8\u8ba4\u6863\uff0c\u9002\u5408\u5e38\u89c4\u5de5\u7a0b\u89e3\u91ca"},
+    "\u9ad8": {"effort": "high", "description": "\u9002\u5408\u9519\u8bef\u5206\u6790\u548c\u591a\u6b65\u64cd\u4f5c"},
+    "\u8d85\u9ad8": {"effort": "xhigh", "description": "\u9002\u5408\u590d\u6742\u8bca\u65ad\u548c\u81ea\u52a8\u4fee\u590d"},
 }
+
 
 LEGACY_SESSION_FILE_NAME = "houdini_ai_agent_sessions.json"
 SESSION_INDEX_FILE_NAME = "session_index.json"
@@ -121,6 +122,9 @@ class ModelCallWorker(QtCore.QObject):
                         user_text=self.vision_prompt,
                         image_paths=image_paths,
                         response_language=self.response_language,
+                        cwd=self.cwd,
+                        cancel_event=self._cancel_event,
+                        process_holder=self._process_holder,
                     )
                     prompt = f"{prompt}\n\nVision companion notes:\n{summary}"
                     image_paths = []
@@ -141,6 +145,7 @@ class ModelCallWorker(QtCore.QObject):
                         f"{self.provider.name} does not support image input and no vision fallback provider is configured.",
                         "warning",
                     )
+
             if self.provider.source == "codex":
                 response = send_codex_chat(
                     prompt=prompt,
@@ -150,14 +155,42 @@ class ModelCallWorker(QtCore.QObject):
                     cancel_event=self._cancel_event,
                     process_holder=self._process_holder,
                 )
+                if (
+                    image_paths
+                    and self.vision_provider is not None
+                    and self.vision_provider.name != self.provider.name
+                    and self._response_indicates_missing_image(response)
+                ):
+                    self.progress.emit(
+                        "Vision retry",
+                        f"{self.provider.name} replied as if no image was received; retrying through {self.vision_provider.name}.",
+                        "warning",
+                    )
+                    summary = describe_images(
+                        provider=self.vision_provider,
+                        user_text=self.vision_prompt,
+                        image_paths=image_paths,
+                        response_language=self.response_language,
+                        cwd=self.cwd,
+                        cancel_event=self._cancel_event,
+                        process_holder=self._process_holder,
+                    )
+                    response = send_codex_chat(
+                        prompt=f"{self.prompt}\n\nVision companion notes:\n{summary}",
+                        image_paths=[],
+                        model=self.provider.model,
+                        cwd=self.cwd,
+                        cancel_event=self._cancel_event,
+                        process_holder=self._process_holder,
+                    )
                 if self._cancel_event.is_set():
-                    self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                    self.finished.emit(self.task_id, "\u8bf7\u6c42\u5df2\u505c\u6b62\u3002", "\u5df2\u505c\u6b62", "Model call was stopped before completion.", "warning")
                     return
                 detail = f"Local Codex reply received via {self.provider.model or 'default model'}."
-                self.finished.emit(self.task_id, response, "生成回复", detail, "success")
+                self.finished.emit(self.task_id, response, "\u751f\u6210\u56de\u590d", detail, "success")
             else:
                 if self._cancel_event.is_set():
-                    self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                    self.finished.emit(self.task_id, "\u8bf7\u6c42\u5df2\u505c\u6b62\u3002", "\u5df2\u505c\u6b62", "Model call was stopped before completion.", "warning")
                     return
                 response = send_chat(
                     provider=self.provider,
@@ -167,22 +200,71 @@ class ModelCallWorker(QtCore.QObject):
                     thinking_level=self.thinking_level,
                     max_tokens=1400,
                 )
+                if (
+                    image_paths
+                    and self.vision_provider is not None
+                    and self.vision_provider.name != self.provider.name
+                    and self._response_indicates_missing_image(response)
+                ):
+                    self.progress.emit(
+                        "Vision retry",
+                        f"{self.provider.name} replied as if no image was received; retrying through {self.vision_provider.name}.",
+                        "warning",
+                    )
+                    summary = describe_images(
+                        provider=self.vision_provider,
+                        user_text=self.vision_prompt,
+                        image_paths=image_paths,
+                        response_language=self.response_language,
+                        cwd=self.cwd,
+                        cancel_event=self._cancel_event,
+                        process_holder=self._process_holder,
+                    )
+                    response = send_chat(
+                        provider=self.provider,
+                        system_prompt=self.system_prompt,
+                        user_text=f"{self.prompt}\n\nVision companion notes:\n{summary}",
+                        image_paths=[],
+                        thinking_level=self.thinking_level,
+                        max_tokens=1400,
+                    )
                 if self._cancel_event.is_set():
-                    self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                    self.finished.emit(self.task_id, "\u8bf7\u6c42\u5df2\u505c\u6b62\u3002", "\u5df2\u505c\u6b62", "Model call was stopped before completion.", "warning")
                     return
                 detail = f"Live provider response received via {self.provider.name} ({build_reasoning_effort(self.thinking_level)} reasoning)."
-                self.finished.emit(self.task_id, response, "生成回复", detail, "success")
+                self.finished.emit(self.task_id, response, "\u751f\u6210\u56de\u590d", detail, "success")
         except (CodexCallError, ProviderCallError) as exc:
             if self._cancel_event.is_set():
-                self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                self.finished.emit(self.task_id, "\u8bf7\u6c42\u5df2\u505c\u6b62\u3002", "\u5df2\u505c\u6b62", "Model call was stopped before completion.", "warning")
                 return
-            self.finished.emit(self.task_id, f"模型调用失败：{exc}", "模型调用失败", str(exc), "error")
+            self.finished.emit(self.task_id, f"\u6a21\u578b\u8c03\u7528\u5931\u8d25\uff1a{exc}", "\u6a21\u578b\u8c03\u7528\u5931\u8d25", str(exc), "error")
         except Exception as exc:
             if self._cancel_event.is_set():
-                self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                self.finished.emit(self.task_id, "\u8bf7\u6c42\u5df2\u505c\u6b62\u3002", "\u5df2\u505c\u6b62", "Model call was stopped before completion.", "warning")
                 return
-            self.finished.emit(self.task_id, f"模型调用异常：{exc}", "模型调用异常", str(exc), "error")
+            self.finished.emit(self.task_id, f"\u6a21\u578b\u8c03\u7528\u5f02\u5e38\uff1a{exc}", "\u6a21\u578b\u8c03\u7528\u5f02\u5e38", str(exc), "error")
 
+
+    def _response_indicates_missing_image(self, response: str) -> bool:
+        normalized = (response or "").lower()
+        markers = [
+            "didn't receive",
+            "did not receive",
+            "can't see the image",
+            "cannot see the image",
+            "no image was provided",
+            "image was not attached",
+            "i could not access the image",
+            "i couldn't access the image",
+            "\u6ca1\u6709\u68c0\u6d4b\u5230\u56fe\u7247",
+            "\u6ca1\u6709\u6536\u5230\u56fe\u7247",
+            "\u672a\u6536\u5230\u56fe\u7247",
+            "\u65e0\u6cd5\u770b\u5230\u56fe\u7247",
+            "\u65e0\u6cd5\u8bc6\u522b\u4f60\u9644\u5e26\u7684\u56fe\u7247",
+            "\u56fe\u7247\u6ca1\u6709\u4f20\u8fc7\u6765",
+            "\u6ca1\u6709\u63a5\u6536\u5230\u56fe\u7247",
+        ]
+        return any(marker in normalized for marker in markers)
 
 class AgentSession(QtCore.QObject):
     message_added = QtCore.Signal(object)
@@ -712,31 +794,24 @@ class AgentSession(QtCore.QObject):
         vision_provider: Optional[ProviderConfig],
     ) -> str:
         if image_paths and self.current_provider.supports_vision:
-            vision_mode = "direct"
+            vision_text = "\u5f53\u524d\u6a21\u578b\u76f4\u63a5\u8bfb\u56fe"
         elif image_paths and vision_provider is not None:
-            vision_mode = f"fallback:{vision_provider.name}"
+            vision_text = f"\u5148\u7531 {vision_provider.name} \u8bfb\u56fe\uff0c\u518d\u4ea4\u7ed9\u5f53\u524d\u6a21\u578b\u7ee7\u7eed\u5206\u6790"
         elif image_paths:
-            vision_mode = "unavailable"
+            vision_text = "\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u7684\u89c6\u89c9\u80fd\u529b"
         else:
-            vision_mode = "not-needed"
+            vision_text = "\u672c\u8f6e\u6ca1\u6709\u56fe\u7247\u8f93\u5165"
         selected = context.get("selected_nodes", []) or []
         errors = context.get("errors", []) or []
-        vision_text = {
-            "direct": "当前模型直接读取图片",
-            "not-needed": "本次没有图片输入",
-            "unavailable": "当前模型不支持视觉，且没有配置视觉兜底",
-        }.get(vision_mode, f"由 {vision_provider.name if vision_provider else '视觉兜底模型'} 先读图，再交给主模型")
         lines = [
-            f"Provider: {self.current_provider.name}",
-            f"Model: {self.current_provider.model}",
-            f"思考档位: {self.current_thinking_level}",
-            f"视觉模式: {vision_text}",
-            f"HIP: {context.get('hip_file', '')}",
-            f"当前网络: {context.get('network', '')}",
-            f"选中节点: {', '.join(selected[:4]) if selected else '无'}",
-            f"错误数量: {len(errors)}",
-            f"图片数量: {len(image_paths)}",
-            "模型正在判断是否需要调用 Houdini 工具。可随时点击停止。",
+            "\u6b63\u5728\u5904\u7406\u8fd9\u6761\u8bf7\u6c42",
+            "1. \u6536\u96c6\u5f53\u524d Houdini \u4e0a\u4e0b\u6587",
+            f"2. \u56fe\u7247\u7b56\u7565\uff1a{vision_text}",
+            "3. \u5224\u65ad\u662f\u5426\u9700\u8981\u8c03\u7528 Houdini \u5de5\u5177",
+            f"\u5f53\u524d\u7f51\u7edc\uff1a{context.get('network', '') or '\u672a\u77e5'}",
+            f"\u9009\u4e2d\u8282\u70b9\uff1a{', '.join(selected[:3]) if selected else '\u65e0'}",
+            f"\u9519\u8bef\u6570\u91cf\uff1a{len(errors)}",
+            f"\u56fe\u7247\u6570\u91cf\uff1a{len(image_paths)}",
         ]
         return "\n".join(lines)
 
@@ -792,34 +867,32 @@ class AgentSession(QtCore.QObject):
         actions = payload.get("actions", [])
         if isinstance(payload.get("action"), str):
             actions = [payload]
-        lines = []
+        lines = ["\u6a21\u578b\u5df2\u5b8c\u6210\u672c\u8f6e\u5224\u65ad"]
         if response:
-            lines.append(f"模型说明: {response}")
+            lines.append(f"\u7ed3\u8bba\uff1a{response}")
         if isinstance(actions, list) and actions:
-            lines.append("计划执行:")
+            lines.append("\u8ba1\u5212\u6267\u884c\uff1a")
             for index, action in enumerate(actions, 1):
                 if not isinstance(action, dict):
                     continue
-                action_name = str(action.get("action", "") or "")
-                summary = self._summarize_model_action(action)
-                lines.append(f"{index}. {action_name} - {summary}")
-        if not lines:
-            lines.append("模型已完成思考，本轮没有生成可执行动作。")
+                lines.append(f"{index}. {self._summarize_model_action(action)}")
+        else:
+            lines.append("\u672c\u8f6e\u4e0d\u9700\u8981\u989d\u5916\u7684 Houdini \u5de5\u5177\u52a8\u4f5c")
         return "\n".join(lines)
 
     def _summarize_model_action(self, action: Dict[str, object]) -> str:
         name = str(action.get("action", "") or "").strip().lower()
         if name == "create_node":
-            return f"创建 {action.get('node_type', 'node')} 节点到 {action.get('parent_path', '') or '当前网络'}"
+            return f"\u521b\u5efa {action.get('node_type', '\u8282\u70b9')}\uff0c\u4f4d\u7f6e\uff1a{action.get('parent_path', '') or '\u5f53\u524d\u7f51\u7edc'}"
         if name == "apply_code":
-            return f"写入代码到 {action.get('target_node', '') or '目标节点'} 的 {action.get('code_parm', 'snippet')} 参数"
+            return f"\u628a\u4ee3\u7801\u5199\u5165 {action.get('target_node', '') or '\u76ee\u6807\u8282\u70b9'} / {action.get('code_parm', 'snippet')}"
         if name == "inspect_selection":
-            return "读取当前选中节点信息"
+            return "\u68c0\u67e5\u5f53\u524d\u9009\u4e2d\u8282\u70b9"
         if name == "capture_viewport":
-            return "捕获当前视口"
+            return "\u6355\u83b7\u5f53\u524d\u89c6\u53e3"
         if name == "analyze_scene":
-            return "分析当前工程上下文"
-        return "执行模型返回的工具动作"
+            return "\u5206\u6790\u5f53\u524d\u573a\u666f\u4e0a\u4e0b\u6587"
+        return "\u6267\u884c\u6a21\u578b\u8bf7\u6c42\u7684\u5de5\u5177\u52a8\u4f5c"
 
     def _execute_model_action(self, action: Dict[str, object]) -> Dict[str, object]:
         name = str(action.get("action", "") or "").strip().lower()
@@ -1024,18 +1097,26 @@ class AgentSession(QtCore.QObject):
         )
 
     def _find_vision_fallback_provider(self, primary: ProviderConfig) -> Optional[ProviderConfig]:
+        fallback_candidates = []
         for provider in self.providers:
             if provider.name == primary.name:
                 continue
             if provider.source == "mock":
                 continue
-            if not provider.supports_vision or not provider.use_as_vision_fallback:
+            if not provider.supports_vision:
                 continue
             if provider.source != "codex" and (not provider.base_url.strip() or not provider.model.strip()):
                 continue
             if not provider.has_key:
                 continue
-            return provider
+            if provider.use_as_vision_fallback:
+                return provider
+            fallback_candidates.append(provider)
+        if fallback_candidates:
+            for provider in fallback_candidates:
+                if provider.source == "codex":
+                    return provider
+            return fallback_candidates[0]
         return None
 
     def _provider_workdir(self, context: Dict[str, object]) -> str:

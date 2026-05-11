@@ -102,8 +102,8 @@ def default_providers() -> List[ProviderConfig]:
             api_key_env="",
             model=codex_model or "gpt-5.5",
             supports_reasoning=True,
-            supports_vision=False,
-            use_as_vision_fallback=False,
+            supports_vision=True,
+            use_as_vision_fallback=True,
             default_thinking_level="中",
             source="codex",
         ),
@@ -140,11 +140,23 @@ def save_app_config(config: Dict[str, Any], path: Optional[Path] = None) -> None
 def load_providers() -> List[ProviderConfig]:
     raw = load_app_config()
     providers = default_providers()
+    index_by_key = {(provider.source, provider.name): idx for idx, provider in enumerate(providers)}
     for item in raw.get("providers", []):
         try:
-            providers.append(ProviderConfig(**item))
+            provider = ProviderConfig(**item)
         except TypeError:
             continue
+        if provider.base_url == "codex://local-cli":
+            provider.source = "codex"
+            provider.name = "Codex Local"
+            provider.supports_vision = True
+            provider.use_as_vision_fallback = True
+        key = (provider.source, provider.name)
+        if key in index_by_key:
+            providers[index_by_key[key]] = provider
+        else:
+            index_by_key[key] = len(providers)
+            providers.append(provider)
     return providers
 
 

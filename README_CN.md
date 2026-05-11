@@ -2,96 +2,90 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-Houdini AI Agent 是一个基于 PySide 的 Houdini 21 原生面板插件，目标是把 AI 辅助的场景分析、节点操作、图片理解和后续自动修复尽量都留在 Houdini 内完成。
+Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它的目标很直接：把多会话 AI 对话、工程上下文读取、图片输入、模型规划、节点操作和错误修复尽量留在 Houdini 内完成。
 
 ## 当前能力
 
 - Houdini 原生 Python Panel
-- 多会话聊天：
+- 多会话聊天
   - 新建
   - 重命名
   - 搜索 / 过滤
   - 导入
   - 导出
   - 删除
-- 会话自动保存到 `$HIP/Agent`
-- 图片粘贴、拖拽上传、预览、导入、导出
+- 每个会话独立自动保存到 `$HIP/Agent`
+- 图片粘贴、拖拽上传、缩略图预览、双击大图查看、导入导出
 - 回复中的 Houdini 节点路径可点击并自动定位
-- 工程上下文面板：
+- 工程上下文面板
   - HIP 路径
   - 当前网络
-  - 当前选中节点
-  - 当前视口摘要
+  - 选中节点
+  - 视口摘要
   - 错误 / 警告摘要
-- Provider 支持：
+- Provider 支持
   - `Codex Local`
   - 自定义 OpenAI-compatible provider
   - `Mock Preview`
-- 模型规划后可触发的 Houdini 动作：
+- 模型规划后可执行的 Houdini 动作
   - 场景分析
   - 选中节点检查
   - 视口捕获
   - 节点创建
   - 代码参数修复写回
+- 后台请求可取消，Houdini 不会被同步阻塞
+- 按钮触发动作会自动跟随当前界面语言
 
-## 本次新增
+## 本次修复与补强
 
-- 内置 **视觉兜底** 工作流
-  - 如果当前主模型不支持视觉，插件会先用设置中标记为 `Vision Fallback` 的 provider 读取图片
-  - 视觉 provider 会输出图片摘要
-  - 再把摘要交给主模型继续推理
-- 设置页新增能力开关：
+- 思考过程展示修复
+  - 不再直接暴露大段原始 JSON
+  - 改为可折叠的简洁“思考过程”块
+  - 内容更接近 Codex 风格的步骤摘要，而不是内部结构转储
+- 视觉链路修复
+  - `Codex Local` 现在默认视为可读图模型
+  - 如果主模型是文本模型，插件会自动寻找可用的视觉兜底 provider
+  - 如果某个模型回复看起来像“没收到图片”，插件会自动尝试走视觉兜底重试
+  - 视觉兜底现在真正支持 `Codex Local`，不再错误地把它当成普通 HTTP provider 调用
+- 视觉设置
   - `Vision`
   - `Vision Fallback`
-- 参考 [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent) 补强了两类非常实用的交互：
-  - 聊天内容里的节点路径点击跳转
-  - 图片拖拽上传
 
-## 参考 Houdini-Agent 后，我们的结论
+## 参考 Houdini-Agent 后我们吸收的方向
 
-那个项目最值得参考的，不只是工具数量，而是产品层的设计方式：
+参考 [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent) 之后，我们认为最值得借鉴的不是单纯“工具更多”，而是这些产品思路：
 
-- 对只读分析和修改执行有更清晰的边界
-- 对视觉模型能力处理更明确
-- 聊天不是纯文本，而是更偏工具型工作区
-- 回复内容里有更多“可操作”的交互细节
+- 只读分析和修改执行边界更清晰
+- 视觉能力和模型能力表达更明确
+- 聊天内容本身更像工具界面，而不只是文字窗口
+- 可点击、可继续操作的交互更强
 
-我们这边这次已经吸收并落地的部分：
+已经吸收并落地的部分：
 
-- 节点路径点击定位
+- 节点路径点击跳转
 - 图片拖拽上传
 - 更明确的视觉能力与视觉兜底机制
+- 更简洁的可折叠思考过程
 
-目前仍落后于它的部分：
+目前仍落后于该项目的部分：
 
-- 完整的 Ask / Agent / Plan 模式
+- 完整的 `Ask / Agent / Plan` 模式
 - Todo 任务卡与执行 DAG
 - 插件管理器 / 规则编辑器 / 记忆管理器
-- 更广泛的 HOM 工具覆盖，比如连线、删除、复制、布局节点
+- 更广泛的 HOM 工具覆盖，例如连线、删除、复制、布局、参数批量修改
 
-## 我们当前识别出的几个问题
+## 公开视觉 MCP 参考
 
-1. 之前对“无视觉模型”的处理不够稳  
-   现在已经修复为主模型 + 视觉 companion 的双层工作流。
-
-2. 聊天区交互感偏弱  
-   现在已经补上节点路径点击定位和图片拖拽上传。
-
-3. 中文文档位置不符合长期维护习惯  
-   现在中文说明移动到根目录，文件名为 `README_CN.md`。
-
-## 调研过的公开视觉 MCP 方向
-
-以下是这次调研中比较值得继续参考的公开项目：
+以下项目目前作为我们后续本地或混合视觉后端的重点参考：
 
 1. [ColeMurray/moondream-mcp](https://github.com/ColeMurray/moondream-mcp)
-   - 轻量本地视觉方向很合适
+   - 适合轻量本地视觉能力
 2. [mrgoonie/human-mcp](https://github.com/mrgoonie/human-mcp)
-   - 截图分析、界面对比、文档读取能力都比较强
+   - 适合截图分析、文档读取、界面对比
 3. [aliargun/mcp-server-gemini](https://github.com/aliargun/mcp-server-gemini)
-   - 适合云端视觉能力路线，当前 GitHub 搜索结果约 240 stars
+   - 适合云端视觉能力接入
 
-当前插件没有直接硬绑定某一个外部 MCP，而是先实现了内部的视觉兜底层，后面我们可以再接成本地 Moondream 或其他视觉后端。
+当前插件没有强绑定某一个外部 MCP，而是先实现了内部的 Vision Companion 工作流。这样可以先把插件跑稳，后续再无缝切换到本地视觉 MCP。
 
 ## 仓库结构
 
@@ -108,6 +102,17 @@ Houdini AI Agent 是一个基于 PySide 的 Houdini 21 原生面板插件，目�
 1. 确保 Houdini 能读取 `packages/houdini_ai_agent.json`
 2. 重启 Houdini
 3. 打开 `Windows > New Pane Tab Type > Python Panel > Houdini AI Agent`
+
+## Provider 说明
+
+- `Codex Local`
+  - 复用本机 Codex CLI 登录态
+  - 不需要手动填写 OpenAI API key
+  - 现在默认作为可读图模型，也可作为视觉兜底
+- OpenAI-compatible providers
+  - 可以填写环境变量名，也可以直接填写 key
+  - 如果 provider 支持视觉，可以直接读取图片
+  - 如果标记为 `Vision Fallback`，则可以作为文本模型的图片理解 companion
 
 ## 文档
 

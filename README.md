@@ -42,6 +42,10 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - clickable Houdini node paths inside replies
   - drag-and-drop image attachment support
   - stronger tool-panel visual styling
+- Vision reliability fixes
+  - `Codex Local` is now treated as vision-capable by default
+  - if a provider replies as if no image was received, the plugin can retry through a fallback vision provider
+  - thought display is now concise and collapsible instead of exposing raw planning JSON
 
 ## What We Learned From Houdini-Agent
 
@@ -102,7 +106,7 @@ Right now, the plugin ships an internal **Vision Companion** workflow instead of
 - `Codex Local`
   - reuses the machine's Codex CLI login
   - does not require manually entering an OpenAI API key
-  - currently treated as text-first, so screenshots should use a vision fallback provider
+  - now treated as vision-capable by default and can also act as a vision fallback provider
 - OpenAI-compatible providers
   - can use either an environment variable name or a direct key in Settings
   - if the provider supports vision, it can directly consume attached images

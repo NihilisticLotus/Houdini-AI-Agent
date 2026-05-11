@@ -29,6 +29,7 @@
   - text-only
   - text + vision
   - vision-only companion
+- Add automatic provider capability probes so the plugin can verify whether a model really accepts images instead of relying only on manual flags
 - Add image understanding cache per conversation so repeated screenshots do not re-spend tokens unnecessarily
 - Add OCR-focused fallback mode for screenshots dominated by text or error logs
 - Evaluate direct integration patterns inspired by:
@@ -46,6 +47,7 @@
 
 ## UI and Workflow
 
+- Evolve the current collapsible thought block into a richer Codex-style progress log with step updates and elapsed timing
 - Add richer visual chips for:
   - current provider
   - current model

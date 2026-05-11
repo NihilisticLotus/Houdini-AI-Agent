@@ -65,6 +65,12 @@ This keeps the interaction model simple:
 - one main thinking model
 - one optional image-reading companion
 
+Recent reliability improvements:
+
+- `Codex Local` is treated as vision-capable by default
+- if a provider answers as if no image arrived, the plugin can retry through a fallback vision provider
+- the collapsible thought block is now concise rather than exposing raw planning JSON
+
 ## Recommended Public Vision MCP References
 
 We researched public GitHub projects that are good references for stronger future vision backends:
