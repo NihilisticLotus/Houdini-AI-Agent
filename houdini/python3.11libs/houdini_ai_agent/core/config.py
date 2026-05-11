@@ -20,6 +20,25 @@ APP_CONFIG_DIR = Path.home() / ".houdini_ai_agent"
 APP_CONFIG_PATH = APP_CONFIG_DIR / "config.json"
 
 
+def resolve_api_key(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    env_value = os.environ.get(value, "").strip()
+    if env_value:
+        return env_value
+    return value
+
+
+def looks_like_direct_key(value: str) -> bool:
+    value = (value or "").strip()
+    if not value:
+        return False
+    if os.environ.get(value):
+        return False
+    return any(marker in value.lower() for marker in ("sk-", "key-", "api_", "bearer ")) or len(value) >= 24
+
+
 @dataclass
 class ProviderConfig:
     name: str
@@ -34,7 +53,7 @@ class ProviderConfig:
     def has_key(self) -> bool:
         if self.source == "codex":
             return has_codex_auth()
-        return bool(self.api_key_env and os.environ.get(self.api_key_env))
+        return bool(resolve_api_key(self.api_key_env))
 
     @property
     def status_text(self) -> str:
@@ -45,7 +64,9 @@ class ProviderConfig:
                 return "Codex missing"
             return "Signed in" if self.has_key else "Codex login required"
         if not self.api_key_env:
-            return "Missing key env"
+            return "Missing key"
+        if looks_like_direct_key(self.api_key_env):
+            return "Ready"
         return "Ready" if self.has_key else f"Set {self.api_key_env}"
 
 

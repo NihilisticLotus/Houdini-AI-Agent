@@ -636,6 +636,7 @@ class AgentSession(QtCore.QObject):
                 return True
             return False
 
+        self._add_message("thought", self._format_model_plan(payload))
         reply_parts: List[str] = []
 
         for action in actions:
@@ -652,6 +653,12 @@ class AgentSession(QtCore.QObject):
 
         self._add_message("assistant", "\n\n".join(reply_parts) if reply_parts else "Action completed.")
         return True
+
+    def _format_model_plan(self, payload: Dict[str, object]) -> str:
+        try:
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        except Exception:
+            return str(payload)
 
     def _execute_model_action(self, action: Dict[str, object]) -> Dict[str, object]:
         name = str(action.get("action", "") or "").strip().lower()

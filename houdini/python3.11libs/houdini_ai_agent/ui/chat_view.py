@@ -19,7 +19,7 @@ class MessageBubble(QtWidgets.QFrame):
         self.setProperty("role", role)
         self.message_index = message_index
 
-        role_label = "You" if role == "user" else "Agent"
+        role_label = "You" if role == "user" else ("Plan" if role == "thought" else "Agent")
         header = QtWidgets.QLabel(f"{role_label}  {timestamp}")
         header.setObjectName("MessageHeader")
 
@@ -34,7 +34,24 @@ class MessageBubble(QtWidgets.QFrame):
         layout.addWidget(header)
         if image_paths:
             layout.addWidget(ImageStrip(image_paths, max_thumb_size=132))
-        layout.addWidget(body)
+        if role == "thought":
+            toggle = QtWidgets.QToolButton()
+            toggle.setText("模型计划 / 工具调用")
+            toggle.setCheckable(True)
+            toggle.setChecked(False)
+            toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            toggle.setArrowType(QtCore.Qt.RightArrow)
+            body.hide()
+
+            def _toggle_plan(checked):
+                toggle.setArrowType(QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow)
+                body.setVisible(checked)
+
+            toggle.toggled.connect(_toggle_plan)
+            layout.addWidget(toggle)
+            layout.addWidget(body)
+        else:
+            layout.addWidget(body)
 
     def contextMenuEvent(self, event):
         menu = QtWidgets.QMenu(self)

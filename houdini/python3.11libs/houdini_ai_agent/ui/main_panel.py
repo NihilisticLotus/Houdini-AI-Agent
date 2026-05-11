@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from houdini_ai_agent.adapters.houdini import create_best_adapter
+from houdini_ai_agent.core.config import looks_like_direct_key
 from houdini_ai_agent.core.session import AgentSession, THINKING_LEVELS
 from houdini_ai_agent.ui.chat_view import ChatView
 from houdini_ai_agent.ui.context_panel import ContextPanel, ExecutionTrace
@@ -515,6 +516,8 @@ class AgentMainPanel(QtWidgets.QWidget):
                 f"请在启动 Houdini 前设置环境变量 {provider.api_key_env}，"
                 "或者先切回 Mock Preview。"
             )
+        elif provider.source != "mock" and looks_like_direct_key(provider.api_key_env):
+            self.provider_status.setToolTip("Using the direct API key saved in provider settings.")
         else:
             self.provider_status.setToolTip("")
 

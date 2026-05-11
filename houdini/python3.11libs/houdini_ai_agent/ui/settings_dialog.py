@@ -16,7 +16,7 @@ from houdini_ai_agent.qt import QtCore, QtWidgets
 class SettingsDialog(QtWidgets.QDialog):
     providers_saved = QtCore.Signal(list)
 
-    COLUMNS = ["Name", "Base URL", "API Key Env", "Model", "Reasoning", "Default Thinking"]
+    COLUMNS = ["Name", "Base URL", "API Key / Env", "Model", "Reasoning", "Default Thinking"]
 
     def __init__(self, providers: List[ProviderConfig], parent=None):
         super().__init__(parent)

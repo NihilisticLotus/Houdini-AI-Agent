@@ -44,6 +44,10 @@ QFrame#MessageBubble {
 QFrame#MessageBubble[role="user"] {
     background: rgba(72, 89, 108, 155);
 }
+QFrame#MessageBubble[role="thought"] {
+    background: rgba(49, 50, 48, 120);
+    border: 1px solid rgba(126, 116, 94, 95);
+}
 QLabel#MessageHeader {
     color: #c9d8ea;
     font-weight: 600;
