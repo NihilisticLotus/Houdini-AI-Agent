@@ -56,6 +56,57 @@ class Conversation:
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%H:%M"))
 
 
+class ModelCallWorker(QtCore.QObject):
+    finished = QtCore.Signal(str, str, str, str, str)
+
+    def __init__(
+        self,
+        task_id: str,
+        provider: ProviderConfig,
+        prompt: str,
+        system_prompt: str,
+        image_paths: List[str],
+        cwd: str,
+        thinking_level: str,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.task_id = task_id
+        self.provider = provider
+        self.prompt = prompt
+        self.system_prompt = system_prompt
+        self.image_paths = image_paths
+        self.cwd = cwd
+        self.thinking_level = thinking_level
+
+    def run(self) -> None:
+        try:
+            if self.provider.source == "codex":
+                response = send_codex_chat(
+                    prompt=self.prompt,
+                    image_paths=self.image_paths,
+                    model=self.provider.model,
+                    cwd=self.cwd,
+                )
+                detail = f"Local Codex reply received via {self.provider.model or 'default model'}."
+                self.finished.emit(self.task_id, response, "生成回复", detail, "success")
+            else:
+                response = send_chat(
+                    provider=self.provider,
+                    system_prompt=self.system_prompt,
+                    user_text=self.prompt,
+                    image_paths=self.image_paths,
+                    thinking_level=self.thinking_level,
+                    max_tokens=1400,
+                )
+                detail = f"Live provider response received via {self.provider.name} ({build_reasoning_effort(self.thinking_level)} reasoning)."
+                self.finished.emit(self.task_id, response, "生成回复", detail, "success")
+        except (CodexCallError, ProviderCallError) as exc:
+            self.finished.emit(self.task_id, f"模型调用失败：{exc}", "模型调用失败", str(exc), "error")
+        except Exception as exc:
+            self.finished.emit(self.task_id, f"模型调用异常：{exc}", "模型调用异常", str(exc), "error")
+
+
 class AgentSession(QtCore.QObject):
     message_added = QtCore.Signal(object)
     event_added = QtCore.Signal(object)
@@ -75,6 +126,8 @@ class AgentSession(QtCore.QObject):
         self.context: Dict[str, object] = {}
         self._busy = False
         self._active_task_id: Optional[str] = None
+        self._active_thread = None
+        self._active_worker = None
         self._loading = False
         self.storage_status = ""
         self.conversations: List[Conversation] = []
@@ -327,7 +380,11 @@ class AgentSession(QtCore.QObject):
         if image_paths:
             self._add_event("读取图片输入", f"{len(image_paths)} image(s) attached for vision analysis.", "running")
 
-        response = ""
+        if not image_paths and self._run_tool_intent_from_text(text):
+            self.save_autosaved_conversations()
+            self._set_busy(False)
+            return
+
         if self.current_provider.source == "mock":
             response = self.adapter.mock_chat_response(
                 prompt=text,
@@ -337,43 +394,18 @@ class AgentSession(QtCore.QObject):
                 image_paths=image_paths,
             )
             self._add_event("生成回复", "Preview response completed in mock mode.", "success")
-        elif self.current_provider.source == "codex":
-            try:
-                response = send_codex_chat(
-                    prompt=self._build_codex_prompt(text, context),
-                    image_paths=image_paths,
-                    model=self.current_provider.model,
-                    cwd=self._provider_workdir(context),
-                )
-                self._add_event(
-                    "生成回复",
-                    f"Local Codex reply received via {self.current_provider.model or 'default model'}.",
-                    "success",
-                )
-            except CodexCallError as exc:
-                response = f"Codex 调用失败：{exc}"
-                self._add_event("Codex 调用失败", str(exc), "error")
-        else:
-            try:
-                response = send_chat(
-                    provider=self.current_provider,
-                    system_prompt=self._build_system_prompt(context),
-                    user_text=text,
-                    image_paths=image_paths,
-                    thinking_level=self.current_thinking_level,
-                    max_tokens=1400,
-                )
-                self._add_event(
-                    "生成回复",
-                    f"Live provider response received via {self.current_provider.name} ({build_reasoning_effort(self.current_thinking_level)} reasoning).",
-                    "success",
-                )
-            except ProviderCallError as exc:
-                response = f"模型调用失败：{exc}"
-                self._add_event("模型调用失败", str(exc), "error")
-        self._add_message("assistant", response)
-        self.save_autosaved_conversations()
-        self._set_busy(False)
+            self._add_message("assistant", response)
+            self.save_autosaved_conversations()
+            self._set_busy(False)
+            return
+
+        prompt = self._build_codex_prompt(text, context) if self.current_provider.source == "codex" else text
+        self._start_model_call(
+            prompt=prompt,
+            system_prompt=self._build_system_prompt(context),
+            image_paths=image_paths,
+            context=context,
+        )
 
     def run_action(self, action: str) -> None:
         self._set_busy(True)
@@ -394,8 +426,10 @@ class AgentSession(QtCore.QObject):
             self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
         elif self.current_provider.source == "codex" and action in {"analyze_scene"}:
             self._run_live_action(action, context)
+            return
         elif self.current_provider.source not in {"mock", "codex"} and action in {"analyze_scene"}:
             self._run_live_action(action, context)
+            return
         else:
             if action == "analyze_scene":
                 result = self.adapter.analyze_scene(self.current_thinking_level)
@@ -448,6 +482,70 @@ class AgentSession(QtCore.QObject):
             self._busy = busy
             self.busy_changed.emit(busy)
 
+    def _run_tool_intent_from_text(self, text: str) -> bool:
+        normalized = text.lower()
+        if any(keyword in normalized for keyword in ("修复", "fix", "repair", "错误", "error", "报错")):
+            result = self.adapter.fix_error_preview(self.current_thinking_level)
+        elif any(keyword in normalized for keyword in ("创建节点", "create node", "new node", "添加节点")):
+            result = self.adapter.create_node_preview(self.current_thinking_level)
+        elif any(keyword in normalized for keyword in ("查看选中", "检查选中", "inspect selection", "selected node")):
+            result = self.adapter.inspect_selection(self.current_thinking_level)
+        elif any(keyword in normalized for keyword in ("截图", "捕获视口", "viewport", "capture")):
+            result = self.adapter.capture_viewport_preview(self.current_thinking_level)
+        else:
+            return False
+
+        self._add_event(result.get("title", "执行工具"), "Matched from chat request and executed in Houdini.", "info")
+        for event in result.get("events", []):
+            self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
+        self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
+        self.refresh_context()
+        return True
+
+    def _start_model_call(
+        self,
+        prompt: str,
+        system_prompt: str,
+        image_paths: List[str],
+        context: Dict[str, object],
+    ) -> None:
+        task_id = self._active_task_id or uuid.uuid4().hex
+        self._active_task_id = task_id
+        thread = QtCore.QThread(self)
+        worker = ModelCallWorker(
+            task_id=task_id,
+            provider=self.current_provider,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            image_paths=image_paths,
+            cwd=self._provider_workdir(context),
+            thinking_level=self.current_thinking_level,
+        )
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._model_call_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._clear_worker_refs)
+        self._active_thread = thread
+        self._active_worker = worker
+        self._add_event("后台思考", "Model call is running in a background thread; Houdini remains usable.", "running")
+        thread.start()
+
+    def _model_call_finished(self, task_id: str, response: str, event_title: str, event_detail: str, status: str) -> None:
+        if task_id != self._active_task_id:
+            return
+        self._add_event(event_title, event_detail, status)
+        self._add_message("assistant", response)
+        self.save_autosaved_conversations()
+        self._active_task_id = None
+        self._set_busy(False)
+
+    def _clear_worker_refs(self) -> None:
+        self._active_thread = None
+        self._active_worker = None
+
     def _run_live_action(self, action: str, context: Dict[str, object]) -> None:
         action_titles = {
             "analyze_scene": "分析工程",
@@ -481,35 +579,19 @@ class AgentSession(QtCore.QObject):
         self._add_event(title, "Started from toolbar action using live provider.", "info")
         self._add_event("收集上下文", self.adapter.describe_context(context), "running")
         if self.current_provider.source == "codex":
-            try:
-                response = send_codex_chat(
-                    prompt=self._build_codex_prompt(prompts[action], context),
-                    model=self.current_provider.model,
-                    cwd=self._provider_workdir(context),
-                )
-                self._add_event("生成回复", f"Local Codex reply received via {self.current_provider.model or 'default model'}.", "success")
-                self._add_message("assistant", response)
-            except CodexCallError as exc:
-                self._add_event("Codex 调用失败", str(exc), "error")
-                self._add_message("assistant", f"Codex 调用失败：{exc}")
+            self._start_model_call(
+                prompt=self._build_codex_prompt(prompts[action], context),
+                system_prompt=self._build_system_prompt(context),
+                image_paths=[],
+                context=context,
+            )
         else:
-            try:
-                response = send_chat(
-                    provider=self.current_provider,
-                    system_prompt=self._build_system_prompt(context),
-                    user_text=prompts[action],
-                    thinking_level=self.current_thinking_level,
-                    max_tokens=1400,
-                )
-                self._add_event(
-                    "生成回复",
-                    f"Live provider response received via {self.current_provider.name} ({build_reasoning_effort(self.current_thinking_level)} reasoning).",
-                    "success",
-                )
-                self._add_message("assistant", response)
-            except ProviderCallError as exc:
-                self._add_event("模型调用失败", str(exc), "error")
-                self._add_message("assistant", f"模型调用失败：{exc}")
+            self._start_model_call(
+                prompt=prompts[action],
+                system_prompt=self._build_system_prompt(context),
+                image_paths=[],
+                context=context,
+            )
 
     def _build_system_prompt(self, context: Dict[str, object]) -> str:
         selected_nodes = context.get("selected_nodes", [])
@@ -534,6 +616,10 @@ class AgentSession(QtCore.QObject):
         return (
             "You are Houdini AI Agent working inside SideFX Houdini.\n"
             "Be concise, practical, and honest about what has and has not been executed.\n"
+            "The host plugin has executable Houdini tools for inspecting the selection, creating preview nodes, "
+            "capturing the viewport, and applying first-pass error fixes. If the execution trace says a tool ran, "
+            "treat that as already executed. If no tool ran, explain the next executable step instead of claiming "
+            "there is no Houdini interface.\n"
             "Use the following Houdini context when answering.\n\n"
             f"HIP: {context.get('hip_file', '')}\n"
             f"Network: {context.get('network', '')}\n"
