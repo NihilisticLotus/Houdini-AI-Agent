@@ -38,7 +38,7 @@ class ProviderConfig:
             return "Preview mode"
         if not self.api_key_env:
             return "Missing key env"
-        return "Ready" if self.has_key else "Env not set"
+        return "Ready" if self.has_key else f"Set {self.api_key_env}"
 
 
 @dataclass

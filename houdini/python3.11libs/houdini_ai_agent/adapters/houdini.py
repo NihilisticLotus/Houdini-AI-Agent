@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -163,9 +164,11 @@ class HoudiniAdapter(MockHoudiniAdapter):
                 "events": [{"title": "缺少选择", "detail": "Please select a node with an error first.", "status": "warning"}],
                 "message": "当前没有选中节点。请先选中一个报错节点。",
             }
-
-        node = selected[-1]
-        events: List[Dict[str, str]] = [{"title": "读取节点", "detail": node.path(), "status": "success"}]
+        selected_node = selected[-1]
+        node = self._find_fix_target(selected_node) or selected_node
+        events: List[Dict[str, str]] = [{"title": "读取节点", "detail": selected_node.path(), "status": "success"}]
+        if node.path() != selected_node.path():
+            events.append({"title": "定位实际报错节点", "detail": node.path(), "status": "success"})
         if not node.errors() and not node.warnings():
             return {
                 "title": "修复错误",
@@ -195,11 +198,16 @@ class HoudiniAdapter(MockHoudiniAdapter):
             except Exception:
                 original = ""
         updated = original
-        applied = []
+        applied: List[str] = []
         for old, new in known_replacements.items():
             if old in updated:
                 updated = updated.replace(old, new)
                 applied.append(f"{old} -> {new}")
+
+        if updated == original:
+            syntax_fixed = self._apply_common_code_fixes(updated, list(node.errors()) + list(node.warnings()))
+            updated = syntax_fixed["code"]
+            applied.extend(syntax_fixed["applied"])
 
         if updated == original:
             details = "; ".join(node.errors() or node.warnings())
@@ -292,11 +300,72 @@ class HoudiniAdapter(MockHoudiniAdapter):
         return hou.node("/obj")
 
     def _find_code_parm(self, node) -> Optional[object]:
-        for parm_name in ("snippet", "python", "code", "vexpression"):
+        for parm_name in ("snippet", "python", "code", "vexpression", "snippet1"):
             parm = node.parm(parm_name)
             if parm is not None:
                 return parm
         return None
+
+    def _find_fix_target(self, node):
+        candidates = [node]
+        try:
+            candidates.extend(node.allSubChildren())
+        except Exception:
+            pass
+        for candidate in candidates:
+            try:
+                if candidate.errors() or candidate.warnings():
+                    if self._find_code_parm(candidate) is not None:
+                        return candidate
+            except Exception:
+                continue
+        return None
+
+    def _apply_common_code_fixes(self, code: str, messages: List[str]) -> Dict[str, object]:
+        updated = code
+        applied: List[str] = []
+
+        combined = " ".join(messages)
+        if "expecting ';'" in combined:
+            lines = updated.splitlines()
+            changed = False
+            for index in range(len(lines) - 1):
+                current = lines[index].rstrip()
+                next_line = lines[index + 1].strip()
+                if not current.strip():
+                    continue
+                if next_line == "}":
+                    stripped = current.strip()
+                    if not stripped.endswith((";", "{", "}", ":", ",")):
+                        lines[index] = current + ";"
+                        changed = True
+            if changed:
+                updated = "\n".join(lines)
+                applied.append("added missing semicolon before closing brace")
+
+        if "unexpected '}'" in combined or "unmatched" in combined.lower():
+            balance = 0
+            lines = updated.splitlines()
+            removable_indexes: List[int] = []
+            for index, line in enumerate(lines):
+                for char in line:
+                    if char == "{":
+                        balance += 1
+                    elif char == "}":
+                        if balance == 0:
+                            removable_indexes.append(index)
+                            break
+                        balance -= 1
+            if removable_indexes:
+                filtered = [line for index, line in enumerate(lines) if index not in removable_indexes]
+                updated = "\n".join(filtered)
+                applied.append("removed unmatched closing brace")
+            elif balance < 0:
+                updated = re.sub(r"\n?\s*\}\s*$", "", updated)
+                if updated != code:
+                    applied.append("removed trailing closing brace")
+
+        return {"code": updated, "applied": applied}
 
     def _capture_viewport_image(self) -> Optional[Path]:
         hou = self.hou

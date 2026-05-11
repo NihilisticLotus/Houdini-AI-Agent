@@ -38,7 +38,10 @@ def send_chat(
 ) -> str:
     api_key = os.environ.get(provider.api_key_env, "").strip()
     if not api_key:
-        raise ProviderCallError(f"Environment variable `{provider.api_key_env}` is not set.")
+        raise ProviderCallError(
+            f"Environment variable `{provider.api_key_env}` is not set. "
+            f"Please set it before launching Houdini, or switch the panel back to `Mock Preview`."
+        )
     if not provider.base_url.strip():
         raise ProviderCallError("Provider base URL is empty.")
     if not provider.model.strip():

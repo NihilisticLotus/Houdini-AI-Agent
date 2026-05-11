@@ -507,7 +507,10 @@ class AgentMainPanel(QtWidgets.QWidget):
         provider = self.session.current_provider
         self.provider_status.setText(provider.status_text)
         if provider.source != "mock" and not provider.has_key:
-            self.provider_status.setToolTip("请在环境变量中设置 API key，或在设置页改为 Mock Preview。")
+            self.provider_status.setToolTip(
+                f"请在启动 Houdini 前设置环境变量 {provider.api_key_env}，"
+                "或者先切回 Mock Preview。"
+            )
         else:
             self.provider_status.setToolTip("")
 
