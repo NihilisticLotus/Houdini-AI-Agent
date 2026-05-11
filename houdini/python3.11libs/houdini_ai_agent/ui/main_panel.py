@@ -260,6 +260,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.chat.send_requested.connect(self.session.send_message)
         self.chat.stop_requested.connect(self.session.stop)
         self.chat.delete_message_requested.connect(self._delete_single_message)
+        self.chat.node_link_clicked.connect(self._focus_node_from_chat)
         self.context_panel.refresh_requested.connect(self.session.refresh_context)
 
         self.session.message_added.connect(self.chat.add_message)
@@ -564,6 +565,17 @@ class AgentMainPanel(QtWidgets.QWidget):
         dialog = SettingsDialog(self.session.providers, self)
         dialog.providers_saved.connect(self.session.set_providers)
         dialog.exec_()
+
+    def _focus_node_from_chat(self, node_path: str) -> None:
+        navigator = getattr(self.session.adapter, "navigate_to_node", None)
+        if navigator is None:
+            return
+        result = navigator(node_path)
+        if result.get("ok"):
+            self.session._add_event("Focus node", result.get("message", node_path), "success")
+            self.session.refresh_context()
+        else:
+            QtWidgets.QMessageBox.warning(self, "Node Focus", result.get("message", node_path))
 
     def _set_actions_busy(self, busy: bool) -> None:
         for button in self.findChildren(QtWidgets.QPushButton):

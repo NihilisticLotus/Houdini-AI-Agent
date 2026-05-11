@@ -12,6 +12,12 @@ class MockHoudiniAdapter:
     def get_session_storage_dir(self):
         return None
 
+    def navigate_to_node(self, node_path: str) -> Dict[str, object]:
+        return {
+            "ok": True,
+            "message": f"Mock mode focused node: {node_path}",
+        }
+
     def get_context(self) -> Dict[str, object]:
         return {
             "hip_file": "E:/Work/Houdini/demo_scene.hip",

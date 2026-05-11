@@ -30,6 +30,27 @@ class HoudiniAdapter(MockHoudiniAdapter):
         except Exception:
             return None
 
+    def navigate_to_node(self, node_path: str) -> Dict[str, object]:
+        hou = self.hou
+        node = hou.node(node_path)
+        if node is None:
+            return {"ok": False, "message": f"Node not found: {node_path}"}
+        try:
+            node.setSelected(True, clear_all_selected=True)
+        except Exception:
+            pass
+        try:
+            editor = hou.ui.paneTabOfType(hou.paneTabType.NetworkEditor)
+            if editor is not None:
+                editor.setPwd(node.parent())
+                try:
+                    editor.homeToSelection()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return {"ok": True, "message": f"Focused node: {node.path()}"}
+
     def get_context(self) -> Dict[str, object]:
         hou = self.hou
         selected = hou.selectedNodes()

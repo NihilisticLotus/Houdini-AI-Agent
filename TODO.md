@@ -3,11 +3,19 @@
 ## Next Priority
 
 - Add a bundled local vision backend option inspired by `moondream-mcp`, so image fallback can run without a remote API
+- Add explicit `Ask / Agent / Plan` work modes inspired by `Houdini-Agent`
+  - `Ask` = read-only
+  - `Agent` = normal execution
+  - `Plan` = plan first, confirm later
 - Expand tool action coverage:
   - connect nodes
+  - delete nodes
+  - copy / duplicate nodes
+  - layout nodes
   - set parameters
   - create subnet / geometry containers with intent-aware defaults
   - toggle display / render flags
+- Add lightweight todo cards for multi-step runs
 - Make repair planning multi-step:
   - inspect
   - propose
@@ -43,6 +51,7 @@
   - current model
   - vision mode
   - active thinking level
+- Add collapsible tool result cards with clearer success / warning / error grouping
 - Add per-message resend
 - Add session pinning / favorites
 - Add collapsible execution groups for long repair runs

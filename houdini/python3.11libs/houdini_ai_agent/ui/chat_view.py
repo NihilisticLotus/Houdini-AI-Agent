@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 from typing import List
+import re
 import tempfile
 import uuid
 
@@ -12,6 +14,7 @@ from houdini_ai_agent.qt import QtCore, QtGui, QtWidgets, alignment_flag
 
 class MessageBubble(QtWidgets.QFrame):
     delete_requested = QtCore.Signal(int)
+    node_link_clicked = QtCore.Signal(str)
 
     def __init__(self, role: str, content: str, timestamp: str, image_paths=None, message_index: int = -1, parent=None):
         super().__init__(parent)
@@ -23,10 +26,19 @@ class MessageBubble(QtWidgets.QFrame):
         header = QtWidgets.QLabel(f"{role_label}  {timestamp}")
         header.setObjectName("MessageHeader")
 
-        body = QtWidgets.QLabel(content)
-        body.setWordWrap(True)
-        body.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        body = QtWidgets.QTextBrowser()
+        body.setOpenLinks(False)
+        body.setOpenExternalLinks(False)
+        body.setFrameShape(QtWidgets.QFrame.NoFrame)
+        body.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        body.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        body.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
+        body.setHtml(self._format_message_html(content))
         body.setObjectName("MessageBody")
+        body.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse)
+        body.setMaximumHeight(16777215)
+        body.document().documentLayout().documentSizeChanged.connect(lambda size: body.setMinimumHeight(int(size.height()) + 6))
+        body.anchorClicked.connect(self._anchor_clicked)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 10)
@@ -59,6 +71,22 @@ class MessageBubble(QtWidgets.QFrame):
         action = menu.exec_(event.globalPos())
         if action == delete_action and self.message_index >= 0:
             self.delete_requested.emit(self.message_index)
+
+    def _anchor_clicked(self, url: QtCore.QUrl) -> None:
+        if url.scheme() == "node":
+            self.node_link_clicked.emit(url.path())
+
+    def _format_message_html(self, content: str) -> str:
+        lines = []
+        for raw_line in content.splitlines() or [""]:
+            escaped_line = escape(raw_line)
+            linked = re.sub(
+                r"(/(?:obj|mat|stage|img|out|shop|tasks|lopnet|ch|vex|top|topnet|cop2|geo)[^\s`<]*)",
+                r'<a href="node:\1">\1</a>',
+                escaped_line,
+            )
+            lines.append(linked)
+        return "<br/>".join(lines)
 
 
 class ImageStrip(QtWidgets.QWidget):
@@ -177,6 +205,10 @@ class ChatInput(QtWidgets.QTextEdit):
     submit_requested = QtCore.Signal()
     image_pasted = QtCore.Signal(str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+
     def keyPressEvent(self, event):
         if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and event.modifiers() == QtCore.Qt.ControlModifier:
             self.submit_requested.emit()
@@ -189,6 +221,21 @@ class ChatInput(QtWidgets.QTextEdit):
         if self._paste_image_from_clipboard():
             return
         super().insertFromMimeData(source)
+
+    def dragEnterEvent(self, event):
+        if self._accept_image_urls(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        accepted = self._extract_image_urls(event.mimeData())
+        if accepted:
+            for path in accepted:
+                self.image_pasted.emit(path)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
 
     def _paste_image_from_clipboard(self) -> bool:
         clipboard = QtWidgets.QApplication.clipboard()
@@ -217,11 +264,25 @@ class ChatInput(QtWidgets.QTextEdit):
         self.image_pasted.emit(str(path))
         return True
 
+    def _accept_image_urls(self, mime) -> bool:
+        return bool(self._extract_image_urls(mime))
+
+    def _extract_image_urls(self, mime) -> List[str]:
+        if mime is None or not mime.hasUrls():
+            return []
+        accepted = []
+        for url in mime.urls():
+            path = url.toLocalFile()
+            if path and Path(path).suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".gif"}:
+                accepted.append(path)
+        return accepted
+
 
 class ChatView(QtWidgets.QWidget):
     send_requested = QtCore.Signal(str, list)
     stop_requested = QtCore.Signal()
     delete_message_requested = QtCore.Signal(int)
+    node_link_clicked = QtCore.Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -246,6 +307,7 @@ class ChatView(QtWidgets.QWidget):
             message_index=self._message_count,
         )
         bubble.delete_requested.connect(self.delete_message_requested.emit)
+        bubble.node_link_clicked.connect(self.node_link_clicked.emit)
         row = QtWidgets.QWidget()
         row_layout = QtWidgets.QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)

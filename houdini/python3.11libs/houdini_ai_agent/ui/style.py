@@ -97,6 +97,21 @@ QLabel#MessageBody {
     color: #f2ede6;
 }
 
+QTextBrowser#MessageBody {
+    color: #f2ede6;
+    border: none;
+    background: transparent;
+}
+
+QTextBrowser#MessageBody a {
+    color: #8ec5ff;
+    text-decoration: none;
+}
+
+QTextBrowser#MessageBody a:hover {
+    color: #b9ddff;
+}
+
 QFrame#AttachmentBar {
     border: 1px solid rgba(130, 116, 94, 0.45);
     border-radius: 8px;

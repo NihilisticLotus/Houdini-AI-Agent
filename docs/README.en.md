@@ -82,6 +82,27 @@ We researched public GitHub projects that are good references for stronger futur
 
 The plugin does **not** hard-bind to one of these yet. Instead, it now ships an internal vision-fallback layer so the panel remains simple and provider-agnostic.
 
+## Reference Comparison: Houdini-Agent
+
+We also reviewed [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent) as a product reference. The most useful ideas for our current plugin were:
+
+- clickable node paths in chat
+- stronger visual/tool-oriented UI treatment
+- clearer capability handling around multimodal models
+
+What we adopted in this milestone:
+
+- clickable Houdini node paths that focus the node in the network editor
+- drag-and-drop image input
+- explicit provider-level vision and vision-fallback flags
+
+What remains on our roadmap:
+
+- full Ask / Agent / Plan modes
+- todo task cards
+- broader HOM tool coverage
+- richer plugin and rule management surfaces
+
 ## Installation
 
 ### Option 1 - Package in this repository
