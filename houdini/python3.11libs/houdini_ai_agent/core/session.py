@@ -719,26 +719,26 @@ class AgentSession(QtCore.QObject):
             vision_mode = "unavailable"
         else:
             vision_mode = "not-needed"
-        return json.dumps(
-            {
-                "status": "waiting_for_model",
-                "provider": self.current_provider.name,
-                "model": self.current_provider.model,
-                "thinking": self.current_thinking_level,
-                "vision_mode": vision_mode,
-                "tools_available": ["create_node", "apply_code", "inspect_selection", "capture_viewport", "analyze_scene"],
-                "context": {
-                    "hip": context.get("hip_file", ""),
-                    "network": context.get("network", ""),
-                    "selected_nodes": context.get("selected_nodes", []),
-                    "errors": context.get("errors", []),
-                    "images": len(image_paths),
-                },
-                "note": "The model is deciding whether to call a Houdini tool. Press Stop to cancel before execution.",
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        selected = context.get("selected_nodes", []) or []
+        errors = context.get("errors", []) or []
+        vision_text = {
+            "direct": "当前模型直接读取图片",
+            "not-needed": "本次没有图片输入",
+            "unavailable": "当前模型不支持视觉，且没有配置视觉兜底",
+        }.get(vision_mode, f"由 {vision_provider.name if vision_provider else '视觉兜底模型'} 先读图，再交给主模型")
+        lines = [
+            f"Provider: {self.current_provider.name}",
+            f"Model: {self.current_provider.model}",
+            f"思考档位: {self.current_thinking_level}",
+            f"视觉模式: {vision_text}",
+            f"HIP: {context.get('hip_file', '')}",
+            f"当前网络: {context.get('network', '')}",
+            f"选中节点: {', '.join(selected[:4]) if selected else '无'}",
+            f"错误数量: {len(errors)}",
+            f"图片数量: {len(image_paths)}",
+            "模型正在判断是否需要调用 Houdini 工具。可随时点击停止。",
+        ]
+        return "\n".join(lines)
 
     def _model_call_finished(self, task_id: str, response: str, event_title: str, event_detail: str, status: str) -> None:
         if task_id != self._active_task_id:
@@ -788,10 +788,38 @@ class AgentSession(QtCore.QObject):
         return True
 
     def _format_model_plan(self, payload: Dict[str, object]) -> str:
-        try:
-            return json.dumps(payload, ensure_ascii=False, indent=2)
-        except Exception:
-            return str(payload)
+        response = str(payload.get("response", "") or "").strip()
+        actions = payload.get("actions", [])
+        if isinstance(payload.get("action"), str):
+            actions = [payload]
+        lines = []
+        if response:
+            lines.append(f"模型说明: {response}")
+        if isinstance(actions, list) and actions:
+            lines.append("计划执行:")
+            for index, action in enumerate(actions, 1):
+                if not isinstance(action, dict):
+                    continue
+                action_name = str(action.get("action", "") or "")
+                summary = self._summarize_model_action(action)
+                lines.append(f"{index}. {action_name} - {summary}")
+        if not lines:
+            lines.append("模型已完成思考，本轮没有生成可执行动作。")
+        return "\n".join(lines)
+
+    def _summarize_model_action(self, action: Dict[str, object]) -> str:
+        name = str(action.get("action", "") or "").strip().lower()
+        if name == "create_node":
+            return f"创建 {action.get('node_type', 'node')} 节点到 {action.get('parent_path', '') or '当前网络'}"
+        if name == "apply_code":
+            return f"写入代码到 {action.get('target_node', '') or '目标节点'} 的 {action.get('code_parm', 'snippet')} 参数"
+        if name == "inspect_selection":
+            return "读取当前选中节点信息"
+        if name == "capture_viewport":
+            return "捕获当前视口"
+        if name == "analyze_scene":
+            return "分析当前工程上下文"
+        return "执行模型返回的工具动作"
 
     def _execute_model_action(self, action: Dict[str, object]) -> Dict[str, object]:
         name = str(action.get("action", "") or "").strip().lower()

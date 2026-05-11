@@ -12,6 +12,9 @@ import uuid
 from houdini_ai_agent.qt import QtCore, QtGui, QtWidgets, alignment_flag
 
 
+NODE_PATH_PATTERN = re.compile(r"(/(?:obj|mat|stage|img|out|shop|tasks|lopnet|ch|vex|top|topnet|cop2|geo)[^\s`<]*)")
+
+
 class MessageBubble(QtWidgets.QFrame):
     delete_requested = QtCore.Signal(int)
     node_link_clicked = QtCore.Signal(str)
@@ -22,23 +25,11 @@ class MessageBubble(QtWidgets.QFrame):
         self.setProperty("role", role)
         self.message_index = message_index
 
-        role_label = "You" if role == "user" else ("Plan" if role == "thought" else "Agent")
+        role_label = "You" if role == "user" else ("Thought" if role == "thought" else "Agent")
         header = QtWidgets.QLabel(f"{role_label}  {timestamp}")
         header.setObjectName("MessageHeader")
 
-        body = QtWidgets.QTextBrowser()
-        body.setOpenLinks(False)
-        body.setOpenExternalLinks(False)
-        body.setFrameShape(QtWidgets.QFrame.NoFrame)
-        body.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        body.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        body.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
-        body.setHtml(self._format_message_html(content))
-        body.setObjectName("MessageBody")
-        body.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse)
-        body.setMaximumHeight(16777215)
-        body.document().documentLayout().documentSizeChanged.connect(lambda size: body.setMinimumHeight(int(size.height()) + 6))
-        body.anchorClicked.connect(self._anchor_clicked)
+        body = self._build_body_label(content)
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 10)
@@ -48,18 +39,18 @@ class MessageBubble(QtWidgets.QFrame):
             layout.addWidget(ImageStrip(image_paths, max_thumb_size=132))
         if role == "thought":
             toggle = QtWidgets.QToolButton()
-            toggle.setText("模型计划 / 工具调用")
+            toggle.setText("思考过程")
             toggle.setCheckable(True)
             toggle.setChecked(False)
             toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
             toggle.setArrowType(QtCore.Qt.RightArrow)
             body.hide()
 
-            def _toggle_plan(checked):
+            def _toggle_thought(checked: bool) -> None:
                 toggle.setArrowType(QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow)
                 body.setVisible(checked)
 
-            toggle.toggled.connect(_toggle_plan)
+            toggle.toggled.connect(_toggle_thought)
             layout.addWidget(toggle)
             layout.addWidget(body)
         else:
@@ -72,21 +63,28 @@ class MessageBubble(QtWidgets.QFrame):
         if action == delete_action and self.message_index >= 0:
             self.delete_requested.emit(self.message_index)
 
-    def _anchor_clicked(self, url: QtCore.QUrl) -> None:
-        if url.scheme() == "node":
-            self.node_link_clicked.emit(url.path())
+    def _build_body_label(self, content: str) -> QtWidgets.QLabel:
+        body = QtWidgets.QLabel()
+        body.setWordWrap(True)
+        body.setTextFormat(QtCore.Qt.RichText)
+        body.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse)
+        body.setOpenExternalLinks(False)
+        body.setObjectName("MessageBody")
+        body.setText(self._format_message_html(content))
+        body.linkActivated.connect(self._link_activated)
+        return body
+
+    def _link_activated(self, href: str) -> None:
+        if href.startswith("node:"):
+            self.node_link_clicked.emit(href[5:])
 
     def _format_message_html(self, content: str) -> str:
         lines = []
         for raw_line in content.splitlines() or [""]:
             escaped_line = escape(raw_line)
-            linked = re.sub(
-                r"(/(?:obj|mat|stage|img|out|shop|tasks|lopnet|ch|vex|top|topnet|cop2|geo)[^\s`<]*)",
-                r'<a href="node:\1">\1</a>',
-                escaped_line,
-            )
+            linked = NODE_PATH_PATTERN.sub(r'<a href="node:\1">\1</a>', escaped_line)
             lines.append(linked)
-        return "<br/>".join(lines)
+        return "<div style='line-height:1.45; white-space:normal;'>" + "<br/>".join(lines) + "</div>"
 
 
 class ImageStrip(QtWidgets.QWidget):
@@ -244,11 +242,7 @@ class ChatInput(QtWidgets.QTextEdit):
         if mime and mime.hasImage():
             image = clipboard.image()
         elif mime and mime.hasUrls():
-            accepted = []
-            for url in mime.urls():
-                path = url.toLocalFile()
-                if path and Path(path).suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}:
-                    accepted.append(path)
+            accepted = self._extract_image_urls(mime)
             if accepted:
                 for path in accepted:
                     self.image_pasted.emit(path)
@@ -427,7 +421,7 @@ class ChatView(QtWidgets.QWidget):
             self,
             "选择图片",
             "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*)",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.gif);;All Files (*)",
         )
         if not paths:
             return
@@ -481,8 +475,8 @@ class ChatView(QtWidgets.QWidget):
     def _remove_bottom_stretch(self) -> None:
         if self.messages_layout.count() == 0:
             return
-        item = self.messages_layout.itemAt(self.messages_layout.count() - 1)
-        if item and item.spacerItem():
+        last = self.messages_layout.itemAt(self.messages_layout.count() - 1)
+        if last and last.spacerItem():
             self.messages_layout.takeAt(self.messages_layout.count() - 1)
 
     def _scroll_to_bottom(self) -> None:

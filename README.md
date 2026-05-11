@@ -1,5 +1,7 @@
 # Houdini AI Agent
 
+**[English](README.md)** | **[中文](README_CN.md)**
+
 Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keeps AI-assisted scene work inside Houdini with multi-session chat, project-aware autosave, image attachments, local Codex login reuse, OpenAI-compatible providers, and model-planned Houdini actions.
 
 ## Current Capabilities

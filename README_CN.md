@@ -1,5 +1,7 @@
 # Houdini AI Agent 中文说明
 
+**[English](README.md)** | **[中文](README_CN.md)**
+
 Houdini AI Agent 是一个基于 PySide 的 Houdini 21 原生面板插件，目标是把 AI 辅助的场景分析、节点操作、图片理解和后续自动修复尽量都留在 Houdini 内完成。
 
 ## 当前能力
