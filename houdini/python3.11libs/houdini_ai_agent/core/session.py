@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import locale
 import re
 import shutil
 import tempfile
@@ -428,7 +429,7 @@ class AgentSession(QtCore.QObject):
         prompt = self._build_agent_tool_prompt(text, context)
         self._start_model_call(
             prompt=prompt,
-            system_prompt=self._build_system_prompt(context),
+            system_prompt=self._build_system_prompt(context, text),
             image_paths=image_paths,
             context=context,
         )
@@ -801,6 +802,7 @@ class AgentSession(QtCore.QObject):
         self._active_worker = None
 
     def _run_live_action(self, action: str, context: Dict[str, object]) -> None:
+        language = self._preferred_response_language("")
         action_titles = {
             "analyze_scene": "分析工程",
             "inspect_selection": "查看选中节点",
@@ -829,36 +831,61 @@ class AgentSession(QtCore.QObject):
                 "and what viewport or render checks the user should perform next."
             ),
         }
+        prompt = (
+            f"Respond in {language}. "
+            "The user triggered this from a Houdini toolbar button, so there is no typed user message. "
+            f"{prompts[action]}"
+        )
         title = action_titles.get(action, action)
         self._add_event(title, "Started from toolbar action using live provider.", "info")
         self._add_event("收集上下文", self.adapter.describe_context(context), "running")
         if self.current_provider.source == "codex":
             self._start_model_call(
-                prompt=self._build_codex_prompt(prompts[action], context),
-                system_prompt=self._build_system_prompt(context),
+                prompt=self._build_codex_prompt(prompt, context, ""),
+                system_prompt=self._build_system_prompt(context, ""),
                 image_paths=[],
                 context=context,
             )
         else:
             self._start_model_call(
-                prompt=prompts[action],
-                system_prompt=self._build_system_prompt(context),
+                prompt=prompt,
+                system_prompt=self._build_system_prompt(context, ""),
                 image_paths=[],
                 context=context,
             )
 
-    def _build_system_prompt(self, context: Dict[str, object]) -> str:
+    def _preferred_response_language(self, user_text: str = "") -> str:
+        if user_text and re.search(r"[\u4e00-\u9fff]", user_text):
+            return "Simplified Chinese"
+        if user_text and re.search(r"[A-Za-z]", user_text) and not re.search(r"[\u4e00-\u9fff]", user_text):
+            return "English"
+        try:
+            qt_locale = QtCore.QLocale.system().name().lower()
+        except Exception:
+            qt_locale = ""
+        try:
+            py_locale = (locale.getlocale()[0] or "").lower()
+        except Exception:
+            py_locale = ""
+        combined = f"{qt_locale} {py_locale}"
+        if any(marker in combined for marker in ("zh", "chinese", "cn", "hans")):
+            return "Simplified Chinese"
+        return "English"
+
+    def _build_system_prompt(self, context: Dict[str, object], user_text: str = "") -> str:
         selected_nodes = context.get("selected_nodes", [])
         if isinstance(selected_nodes, list):
             selected_summary = ", ".join(str(item) for item in selected_nodes[:8]) or "none"
         else:
             selected_summary = "none"
+        language = self._preferred_response_language(user_text)
         return (
             "You are Houdini AI Agent, a helpful assistant working inside SideFX Houdini. "
             "Be concise, practical, and action-oriented. "
             "When the user attaches images, analyze them and relate them to Houdini workflows when relevant. "
             "When discussing the current project, use the provided scene context. "
             "Do not invent executed actions. If something is only a suggestion, say so clearly.\n\n"
+            f"Response language: {language}. Always answer user-facing text in this language unless the user explicitly asks otherwise.\n\n"
             f"HIP: {context.get('hip_file', '')}\n"
             f"Network: {context.get('network', '')}\n"
             f"Selected nodes: {selected_summary}\n"
@@ -868,6 +895,7 @@ class AgentSession(QtCore.QObject):
 
     def _build_agent_tool_prompt(self, user_text: str, context: Dict[str, object]) -> str:
         fix_context = self._error_fix_context()
+        language = self._preferred_response_language(user_text)
         return (
             "You are controlling a Houdini plugin that can execute a small set of real HOM tools.\n"
             "First decide from the user's request and scene context whether a tool should be executed.\n"
@@ -885,6 +913,7 @@ class AgentSession(QtCore.QObject):
             "  ]\n"
             "}\n\n"
             "Rules:\n"
+            f"- User-facing response text must be in {language} unless the user explicitly asks for another language.\n"
             "- For creation requests, choose the actual Houdini node type from intent. Examples: box -> box, plane/planar surface -> grid, sphere -> sphere.\n"
             "- For error repair, inspect the provided error/code context and return apply_code with the full corrected snippet when the target/code parameter is editable.\n"
             "- Do not say the plugin has no executable tools. Use actions when a tool matches.\n"
@@ -895,7 +924,8 @@ class AgentSession(QtCore.QObject):
             f"Editable error/code context: {json.dumps(fix_context, ensure_ascii=False)}\n"
         )
 
-    def _build_codex_prompt(self, user_text: str, context: Dict[str, object]) -> str:
+    def _build_codex_prompt(self, user_text: str, context: Dict[str, object], source_text: str = "") -> str:
+        language = self._preferred_response_language(source_text or user_text)
         return (
             "You are Houdini AI Agent working inside SideFX Houdini.\n"
             "Be concise, practical, and honest about what has and has not been executed.\n"
@@ -903,6 +933,7 @@ class AgentSession(QtCore.QObject):
             "capturing the viewport, and applying first-pass error fixes. If the execution trace says a tool ran, "
             "treat that as already executed. If no tool ran, explain the next executable step instead of claiming "
             "there is no Houdini interface.\n"
+            f"Respond in {language} unless the user explicitly asks for another language.\n"
             "Use the following Houdini context when answering.\n\n"
             f"HIP: {context.get('hip_file', '')}\n"
             f"Network: {context.get('network', '')}\n"
