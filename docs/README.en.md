@@ -35,6 +35,10 @@ Houdini AI Agent is a Houdini 21 Python Panel plugin built with PySide. It is de
   - configurable vision fallback role
 - `Mock Preview`
   - safe offline UI/testing mode
+- Separate vision backend routing
+  - the main chat model can stay text-only
+  - image understanding can come from another provider or optional `Codex Local`
+  - future `MCP` and `Skill` modes already have reserved config entries in Settings
 
 ### Houdini Context and Actions
 
@@ -56,8 +60,8 @@ Houdini AI Agent is a Houdini 21 Python Panel plugin built with PySide. It is de
 Some models are text-only. To avoid losing screenshot support:
 
 - if the selected main model supports vision, attached images go straight to that model
-- if the selected main model does **not** support vision, the plugin looks for the first provider marked as `Vision Fallback`
-- that fallback provider summarizes the image(s)
+- if the selected main model does **not** support vision, the plugin resolves a separate vision backend
+- that backend summarizes the image(s)
 - the image summary is injected into the main model prompt
 
 This keeps the interaction model simple:
@@ -67,8 +71,9 @@ This keeps the interaction model simple:
 
 Recent reliability improvements:
 
-- `Codex Local` is treated as vision-capable by default
-- if a provider answers as if no image arrived, the plugin can retry through a fallback vision provider
+- `Codex Local` is optional and no longer implied as the default fallback
+- model-aware checks treat `glm-5.1` and similar text-only models as unable to read images, even when older saved settings contain a stale vision flag
+- if a provider answers as if no image arrived, the plugin can retry through the resolved vision backend
 - the collapsible thought block is now concise rather than exposing raw planning JSON
 
 ## Recommended Public Vision MCP References
@@ -86,7 +91,7 @@ We researched public GitHub projects that are good references for stronger futur
    - Gemini MCP with vision support
    - GitHub search result currently shows `240 stars`
 
-The plugin does **not** hard-bind to one of these yet. Instead, it now ships an internal vision-fallback layer so the panel remains simple and provider-agnostic.
+The plugin does **not** hard-bind to one of these yet. Instead, it now ships an internal vision-backend layer so the panel remains simple and provider-agnostic.
 
 ## Reference Comparison: Houdini-Agent
 
@@ -144,8 +149,9 @@ You can also use the included `Houdini AI` shelf.
 4. Capture the viewport and confirm the image appears in chat.
 5. Paste an image with `Ctrl+V`.
 6. Configure:
-   - a text-first main model
-   - a second multimodal provider marked as `Vision Fallback`
+   - a text-first main model such as `glm-5.1`
+   - a separate multimodal vision backend, or `Codex Local` if you want to use it
+   - keep `glm-5.1` out of the vision backend target list because it is a text model
 7. Send an image plus a question and confirm:
    - the request stays responsive
    - the image is still understood even though the main model is text-only

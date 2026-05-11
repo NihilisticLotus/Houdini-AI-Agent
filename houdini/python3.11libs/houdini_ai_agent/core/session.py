@@ -16,7 +16,15 @@ from typing import Dict, List, Optional
 import uuid
 
 from houdini_ai_agent.core.codex_cli import CodexCallError, send_codex_chat
-from houdini_ai_agent.core.config import ProviderConfig, load_providers
+from houdini_ai_agent.core.config import (
+    ProviderConfig,
+    VisionBackendConfig,
+    load_providers,
+    load_ui_language,
+    load_vision_backend,
+    provider_model_allows_vision,
+    save_ui_language,
+)
 from houdini_ai_agent.core.openai_compat import (
     ProviderCallError,
     build_reasoning_effort,
@@ -35,14 +43,7 @@ THINKING_LEVELS: Dict[str, Dict[str, str]] = {
 
 
 def provider_can_read_images(provider: ProviderConfig) -> bool:
-    if not provider.supports_vision:
-        return False
-    if provider.source == "codex":
-        return True
-    model = (provider.model or provider.name or "").lower()
-    if "glm-5.1" in model and not any(token in model for token in ("vision", "vl", "-v", "v-")):
-        return False
-    return True
+    return provider_model_allows_vision(provider)
 
 
 LEGACY_SESSION_FILE_NAME = "houdini_ai_agent_sessions.json"
@@ -74,6 +75,13 @@ class Conversation:
     messages: List[AgentMessage] = field(default_factory=list)
     events: List[ExecutionEvent] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%H:%M"))
+
+
+@dataclass
+class VisionBackendResolution:
+    provider: Optional[ProviderConfig]
+    mode: str
+    status: str = ""
 
 
 class ModelCallWorker(QtCore.QObject):
@@ -291,6 +299,8 @@ class AgentSession(QtCore.QObject):
         super().__init__(parent)
         self.adapter = adapter
         self.providers: List[ProviderConfig] = load_providers()
+        self.vision_backend = load_vision_backend()
+        self.ui_language = load_ui_language()
         self.current_provider_index = 0
         self.current_thinking_level = "中"
         self.context: Dict[str, object] = {}
@@ -533,6 +543,16 @@ class AgentSession(QtCore.QObject):
         self.current_provider_index = min(self.current_provider_index, max(0, len(providers) - 1))
         self.providers_changed.emit(self.providers)
 
+    def set_runtime_settings(self, providers: List[ProviderConfig], vision_backend: VisionBackendConfig) -> None:
+        self.providers = providers
+        self.vision_backend = vision_backend
+        self.current_provider_index = min(self.current_provider_index, max(0, len(providers) - 1))
+        self.providers_changed.emit(self.providers)
+
+    def set_ui_language(self, language: str) -> None:
+        self.ui_language = "en" if language == "en" else "zh"
+        save_ui_language(self.ui_language)
+
     def refresh_context(self) -> Dict[str, object]:
         self.context = self.adapter.get_context()
         self.context_changed.emit(self.context)
@@ -545,6 +565,7 @@ class AgentSession(QtCore.QObject):
             return
         if not text and image_paths:
             text = "请识别并分析这些图片。"
+        image_paths = self._resolve_followup_image_paths(text, image_paths)
         image_paths = self._materialize_image_paths(self.current_conversation_id, image_paths)
 
         self._set_busy(True)
@@ -633,6 +654,53 @@ class AgentSession(QtCore.QObject):
         message = AgentMessage(role=role, content=content, image_paths=image_paths or [])
         self.current_conversation.messages.append(message)
         self.message_added.emit(message)
+
+    def _resolve_followup_image_paths(self, text: str, image_paths: List[str]) -> List[str]:
+        if image_paths:
+            return image_paths
+        if not self._looks_like_image_followup(text):
+            return []
+        recent_images = self._recent_conversation_image_paths()
+        if recent_images:
+            self._add_event("沿用上一条图片", f"Reusing {len(recent_images)} recent image(s) because the request refers to a previous image.", "info")
+        return recent_images
+
+    def _looks_like_image_followup(self, text: str) -> bool:
+        normalized = (text or "").lower()
+        if not normalized:
+            return False
+        markers = (
+            "这张图",
+            "这个图",
+            "这幅图",
+            "上一张图",
+            "刚才那张图",
+            "刚刚那张图",
+            "上图",
+            "前面的图",
+            "这张截图",
+            "这个截图",
+            "那张图",
+            "那幅图",
+            "图片",
+            "截图",
+            "that image",
+            "this image",
+            "the image",
+            "that screenshot",
+            "this screenshot",
+            "the screenshot",
+            "previous image",
+            "previous screenshot",
+            "above image",
+        )
+        return any(marker in normalized or marker in text for marker in markers)
+
+    def _recent_conversation_image_paths(self) -> List[str]:
+        for message in reversed(self.current_conversation.messages[:-1]):
+            if message.role == "user" and message.image_paths:
+                return list(message.image_paths)
+        return []
 
     def _add_event(self, title: str, detail: str, status: str = "info") -> None:
         event = ExecutionEvent(title=title, detail=detail, status=status)
@@ -769,7 +837,8 @@ class AgentSession(QtCore.QObject):
     ) -> None:
         task_id = self._active_task_id or uuid.uuid4().hex
         self._active_task_id = task_id
-        vision_provider = self._find_vision_fallback_provider(self.current_provider) if image_paths else None
+        vision_resolution = self._find_vision_fallback_provider(self.current_provider) if image_paths else VisionBackendResolution(None, "disabled")
+        vision_provider = vision_resolution.provider
         response_language = self._preferred_response_language(vision_prompt)
         thread = QtCore.QThread(self)
         worker = ModelCallWorker(
@@ -794,7 +863,9 @@ class AgentSession(QtCore.QObject):
         thread.finished.connect(lambda task_id=task_id, thread=thread: self._clear_worker_refs(task_id, thread))
         self._active_thread = thread
         self._active_worker = worker
-        self._add_message("thought", self._format_live_request_plan(context, image_paths, vision_provider))
+        if vision_resolution.status and image_paths and not provider_can_read_images(self.current_provider):
+            self._add_event("Vision backend", vision_resolution.status, "warning")
+        self._add_message("thought", self._format_live_request_plan(context, image_paths, vision_resolution))
         self._add_event("后台思考", "Model call is running in a background thread; Houdini remains usable.", "running")
         thread.start()
 
@@ -802,12 +873,14 @@ class AgentSession(QtCore.QObject):
         self,
         context: Dict[str, object],
         image_paths: List[str],
-        vision_provider: Optional[ProviderConfig],
+        vision_resolution: VisionBackendResolution,
     ) -> str:
         if image_paths and provider_can_read_images(self.current_provider):
             vision_text = "\u5f53\u524d\u6a21\u578b\u76f4\u63a5\u8bfb\u56fe"
-        elif image_paths and vision_provider is not None:
-            vision_text = f"\u5148\u7531 {vision_provider.name} \u8bfb\u56fe\uff0c\u518d\u4ea4\u7ed9\u5f53\u524d\u6a21\u578b\u7ee7\u7eed\u5206\u6790"
+        elif image_paths and vision_resolution.provider is not None:
+            vision_text = f"\u5148\u7531 {vision_resolution.provider.name} \u8bfb\u56fe\uff0c\u518d\u4ea4\u7ed9\u5f53\u524d\u6a21\u578b\u7ee7\u7eed\u5206\u6790"
+        elif image_paths and vision_resolution.status:
+            vision_text = vision_resolution.status
         elif image_paths:
             vision_text = "\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u7684\u89c6\u89c9\u80fd\u529b"
         else:
@@ -1119,28 +1192,71 @@ class AgentSession(QtCore.QObject):
             f"User request:\n{user_text}"
         )
 
-    def _find_vision_fallback_provider(self, primary: ProviderConfig) -> Optional[ProviderConfig]:
+    def _find_vision_fallback_provider(self, primary: ProviderConfig) -> VisionBackendResolution:
+        mode = self.vision_backend.normalized_mode()
+        if mode == "disabled":
+            return VisionBackendResolution(None, mode)
+        if mode == "codex":
+            provider = self._provider_by_source("codex")
+            if provider is None:
+                return VisionBackendResolution(None, mode, "Codex Local is selected as the vision backend, but it is not configured on this machine.")
+            if provider.name == primary.name:
+                return VisionBackendResolution(provider, mode)
+            if not self._provider_ready_for_vision(provider):
+                return VisionBackendResolution(None, mode, "Codex Local is selected as the vision backend, but it is not ready to read images.")
+            return VisionBackendResolution(provider, mode)
+        if mode == "provider":
+            target = self.vision_backend.target.strip()
+            provider = self._provider_by_name(target) if target else None
+            if provider is None:
+                return VisionBackendResolution(None, mode, "A specific vision provider is selected, but no provider name is configured.")
+            if not self._provider_ready_for_vision(provider):
+                return VisionBackendResolution(None, mode, f"{provider.name} is selected as the vision backend, but it is not ready to read images.")
+            return VisionBackendResolution(provider, mode)
+        if mode == "mcp":
+            return VisionBackendResolution(None, mode, "An MCP vision backend is configured, but this plugin build does not execute MCP vision backends yet.")
+        if mode == "skill":
+            return VisionBackendResolution(None, mode, "A skill vision backend is configured, but this plugin build does not execute skill vision backends yet.")
+
+        explicit_candidates = []
         fallback_candidates = []
         for provider in self.providers:
             if provider.name == primary.name:
                 continue
-            if provider.source == "mock":
+            if provider.source == "codex":
                 continue
-            if not provider_can_read_images(provider):
-                continue
-            if provider.source != "codex" and (not provider.base_url.strip() or not provider.model.strip()):
-                continue
-            if not provider.has_key:
+            if not self._provider_ready_for_vision(provider):
                 continue
             if provider.use_as_vision_fallback:
-                return provider
-            fallback_candidates.append(provider)
+                explicit_candidates.append(provider)
+            else:
+                fallback_candidates.append(provider)
+        if explicit_candidates:
+            return VisionBackendResolution(explicit_candidates[0], mode)
         if fallback_candidates:
-            for provider in fallback_candidates:
-                if provider.source == "codex":
-                    return provider
-            return fallback_candidates[0]
+            return VisionBackendResolution(fallback_candidates[0], mode)
+        return VisionBackendResolution(None, mode, "自动模式没有找到可用的非 Codex 视觉后端。请勾选一个支持视觉的 provider，或在视觉后端里显式选择 Codex Local。")
+
+    def _provider_by_name(self, name: str) -> Optional[ProviderConfig]:
+        for provider in self.providers:
+            if provider.name == name:
+                return provider
         return None
+
+    def _provider_by_source(self, source: str) -> Optional[ProviderConfig]:
+        for provider in self.providers:
+            if provider.source == source:
+                return provider
+        return None
+
+    def _provider_ready_for_vision(self, provider: ProviderConfig) -> bool:
+        if provider.source == "mock":
+            return False
+        if not provider_can_read_images(provider):
+            return False
+        if provider.source != "codex" and (not provider.base_url.strip() or not provider.model.strip()):
+            return False
+        return provider.has_key
 
     def _provider_workdir(self, context: Dict[str, object]) -> str:
         hip_file = str(context.get("hip_file", "") or "").strip()

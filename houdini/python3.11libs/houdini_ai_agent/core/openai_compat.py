@@ -73,7 +73,7 @@ def send_chat(
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ProviderCallError(f"Provider returned invalid JSON: {raw[:280]}") from exc
-    return _extract_text(data)
+    return _extract_text(data, raw)
 
 
 def describe_images(
@@ -184,28 +184,87 @@ def _detect_image_mime(path: Path) -> str:
     return ""
 
 
-def _extract_text(data: Dict[str, object]) -> str:
+def _extract_text(data: Dict[str, object], raw: str = "") -> str:
     choices = data.get("choices")
     if isinstance(choices, list) and choices:
         first = choices[0]
         if isinstance(first, dict):
+            direct_text = first.get("text")
+            if isinstance(direct_text, str) and direct_text.strip():
+                return direct_text.strip()
             message = first.get("message")
             if isinstance(message, dict):
-                content = message.get("content")
-                if isinstance(content, str) and content.strip():
-                    return content.strip()
-                if isinstance(content, list):
-                    parts = []
-                    for item in content:
-                        if isinstance(item, dict):
-                            text = item.get("text")
-                            if isinstance(text, str) and text.strip():
-                                parts.append(text.strip())
-                    if parts:
-                        return "\n".join(parts)
+                extracted = _extract_text_from_message(message)
+                if extracted:
+                    return extracted
+            delta = first.get("delta")
+            if isinstance(delta, dict):
+                extracted = _extract_text_from_message(delta)
+                if extracted:
+                    return extracted
     error_info = data.get("error")
     if isinstance(error_info, dict):
         message = error_info.get("message")
         if isinstance(message, str) and message.strip():
             raise ProviderCallError(message.strip())
-    raise ProviderCallError("Provider response did not include assistant text.")
+    snippet = _response_debug_excerpt(data, raw)
+    raise ProviderCallError(f"Provider response did not include assistant text. Response excerpt: {snippet}")
+
+
+def _extract_text_from_message(message: Dict[str, object]) -> str:
+    content = message.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+                elif item.get("type") == "text":
+                    inner = item.get("content")
+                    if isinstance(inner, str) and inner.strip():
+                        parts.append(inner.strip())
+        if parts:
+            return "\n".join(parts)
+
+    reasoning = message.get("reasoning_content")
+    if isinstance(reasoning, str) and reasoning.strip():
+        return reasoning.strip()
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        parts = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function")
+            if isinstance(function, dict):
+                name = str(function.get("name", "") or "").strip()
+                arguments = function.get("arguments")
+                if isinstance(arguments, str) and arguments.strip():
+                    parts.append(arguments.strip())
+                elif name:
+                    parts.append(name)
+        if parts:
+            return "\n".join(parts)
+    return ""
+
+
+def _response_debug_excerpt(data: Dict[str, object], raw: str) -> str:
+    for key in ("id", "model", "request_id"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            prefix = f"{key}={value.strip()}"
+            break
+    else:
+        prefix = "no-id"
+    compact = " ".join((raw or "").split())
+    if compact:
+        return f"{prefix} | {compact[:280]}"
+    try:
+        fallback = json.dumps(data, ensure_ascii=False)
+    except TypeError:
+        fallback = str(data)
+    return f"{prefix} | {fallback[:280]}"

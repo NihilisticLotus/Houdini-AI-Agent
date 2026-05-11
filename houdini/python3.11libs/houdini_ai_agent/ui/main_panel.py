@@ -28,9 +28,11 @@ class AgentMainPanel(QtWidgets.QWidget):
         self._right_sidebar_width = 310
         self._focus_mode = False
         self._trace_visible_before_focus = True
+        self._action_buttons = {}
 
         self.session = AgentSession(create_best_adapter(), self)
         self._build_ui()
+        self._apply_ui_language()
         self._wire()
         self._populate_provider_combo()
         self._refresh_conversation_list()
@@ -117,6 +119,10 @@ class AgentMainPanel(QtWidgets.QWidget):
         header.addLayout(title_col)
         header.addStretch(1)
         header.addLayout(status_col)
+        self.language_btn = QtWidgets.QPushButton("")
+        self.language_btn.setFixedWidth(74)
+        self.language_btn.clicked.connect(self._toggle_ui_language)
+        header.addWidget(self.language_btn)
         header.addWidget(self.focus_mode_btn)
         header.addWidget(settings_btn)
         header_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -281,6 +287,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         button = QtWidgets.QPushButton(label)
         button.setProperty("agent_action", action)
         button.clicked.connect(lambda checked=False, name=action: self.session.run_action(name))
+        self._action_buttons[action] = button
         layout.addWidget(button)
 
     def _refresh_conversation_list(self) -> None:
@@ -544,6 +551,29 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.set_thinking_level(level)
         self.thinking_hint.setText(THINKING_LEVELS[level]["description"])
 
+    def _toggle_ui_language(self) -> None:
+        next_language = "en" if self.session.ui_language == "zh" else "zh"
+        self.session.set_ui_language(next_language)
+        self._apply_ui_language()
+
+    def _apply_ui_language(self) -> None:
+        language = getattr(self.session, "ui_language", "zh")
+        is_english = language == "en"
+        if hasattr(self, "language_btn"):
+            self.language_btn.setText("中文" if is_english else "English")
+            self.language_btn.setToolTip("Switch to Chinese" if is_english else "切换到英文")
+        if hasattr(self, "_action_buttons"):
+            labels = {
+                "analyze_scene": ("Analyze Scene", "分析工程"),
+                "inspect_selection": ("Inspect Selection", "查看选中节点"),
+                "create_nodes": ("Create Node", "创建节点"),
+                "fix_error": ("Fix Error", "修复错误"),
+                "capture_viewport": ("Capture Viewport", "捕获视口"),
+            }
+            for action, button in self._action_buttons.items():
+                english, chinese = labels.get(action, (action, action))
+                button.setText(english if is_english else chinese)
+
     def _update_provider_status(self) -> None:
         provider = self.session.current_provider
         self.provider_status.setText(provider.status_text)
@@ -562,8 +592,8 @@ class AgentMainPanel(QtWidgets.QWidget):
             self.provider_status.setToolTip("")
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self.session.providers, self)
-        dialog.providers_saved.connect(self.session.set_providers)
+        dialog = SettingsDialog(self.session.providers, self.session.vision_backend, self)
+        dialog.settings_saved.connect(self.session.set_runtime_settings)
         dialog.exec_()
 
     def _focus_node_from_chat(self, node_path: str) -> None:

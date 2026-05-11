@@ -25,10 +25,18 @@
 
 ## Vision and Multimodal
 
+- Extend the new vision-backend abstraction beyond provider/Codex routing:
+  - `MCP` vision backend execution
+  - `Skill` vision backend execution
+  - backend capability discovery and health checks
 - Support explicit provider capability presets for:
   - text-only
   - text + vision
   - vision-only companion
+- Add a provider capability registry seeded with known model families:
+  - `glm-5.1` / `glm-5-turbo` as text-only
+  - GPT / Claude / Gemini vision-capable families
+  - user overrides with a visible warning when the model name conflicts with the selected capability
 - Add automatic provider capability probes so the plugin can verify whether a model really accepts images instead of relying only on manual flags
 - Add image understanding cache per conversation so repeated screenshots do not re-spend tokens unnecessarily
 - Add OCR-focused fallback mode for screenshots dominated by text or error logs

@@ -43,13 +43,14 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
   - 改为可折叠的简洁“思考过程”块
   - 内容更接近 Codex 风格的步骤摘要，而不是内部结构转储
 - 视觉链路修复
-  - `Codex Local` 现在默认视为可读图模型
-  - 如果主模型是文本模型，插件会自动寻找可用的视觉兜底 provider
+  - `Codex Local` 只在显式选择为视觉后端时用于读图，不再被 Auto 模式隐式调用
+  - `glm-5.1` 等已知纯文本模型会被阻止直接读图，即使旧配置里误勾了视觉能力
+  - 如果主模型是文本模型，插件会自动寻找可用的非 Codex 视觉后端 provider
   - 如果某个模型回复看起来像“没收到图片”，插件会自动尝试走视觉兜底重试
-  - 视觉兜底现在真正支持 `Codex Local`，不再错误地把它当成普通 HTTP provider 调用
 - 视觉设置
   - `Vision`
-  - `Vision Fallback`
+  - `Auto Fallback`
+  - 独立的视觉后端模式：Auto、Disabled、指定 Provider、显式 Codex Local、MCP 预留、Skill 预留
 
 ## 参考 Houdini-Agent 后我们吸收的方向
 
@@ -108,11 +109,15 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
 - `Codex Local`
   - 复用本机 Codex CLI 登录态
   - 不需要手动填写 OpenAI API key
-  - 现在默认作为可读图模型，也可作为视觉兜底
+  - 可以作为可选视觉后端，但必须在视觉后端里显式选择
 - OpenAI-compatible providers
   - 可以填写环境变量名，也可以直接填写 key
   - 如果 provider 支持视觉，可以直接读取图片
-  - 如果标记为 `Vision Fallback`，则可以作为文本模型的图片理解 companion
+  - `glm-5.1` 这类纯文本模型应只作为主聊天模型；需要读图时请另配一个多模态视觉后端
+- 视觉后端
+  - Auto 只会选择通过模型能力检查的非 Codex provider
+  - 指定 Provider 适合把 `glm-5.1` 主模型和一个多模态读图模型组合使用
+  - Codex Local 只有在显式选择时才会被调用
 
 ## 文档
 

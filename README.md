@@ -2,7 +2,7 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keeps AI-assisted scene work inside Houdini with multi-session chat, project-aware autosave, image attachments, local Codex login reuse, OpenAI-compatible providers, and model-planned Houdini actions.
+Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keeps AI-assisted scene work inside Houdini with multi-session chat, project-aware autosave, image attachments, optional Codex login reuse, OpenAI-compatible providers, separate vision backend routing, and model-planned Houdini actions.
 
 ## Current Capabilities
 
@@ -32,19 +32,21 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
 
 ## New in This Milestone
 
-- Built-in **vision fallback routing**
-  - If the current main model is text-only, attached images are first summarized by a separate provider marked as `Vision Fallback` in Settings.
+- Built-in **vision backend routing**
+  - If the current main model is text-only, attached images can be summarized by a separate vision backend in Settings.
   - The image summary is then injected into the main model prompt, so text-only models can still work with screenshots and viewport captures.
+  - `Codex Local` is optional and can act as one vision backend, but the plugin no longer treats it as a required default.
 - Provider capability flags in Settings:
   - `Vision`
-  - `Vision Fallback`
+  - `Auto Fallback`
 - Chat quality improvements inspired by [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichiku/Houdini-Agent)
   - clickable Houdini node paths inside replies
   - drag-and-drop image attachment support
   - stronger tool-panel visual styling
-- Vision reliability fixes
-  - `Codex Local` is now treated as vision-capable by default
-  - if a provider replies as if no image was received, the plugin can retry through a fallback vision provider
+- Vision routing improvements
+  - `Codex Local` is available as an optional vision companion instead of an implied default
+  - known text-only models such as `glm-5.1` are blocked from direct image input even if an old config accidentally marked them as vision-capable
+  - if a provider replies as if no image was received, the plugin can retry through the resolved vision backend
   - thought display is now concise and collapsible instead of exposing raw planning JSON
 
 ## What We Learned From Houdini-Agent
@@ -83,7 +85,7 @@ These are not hard dependencies of the plugin, but they are strong public refere
    - Gemini MCP with direct vision support
    - GitHub search result currently shows about `240 stars`
 
-Right now, the plugin ships an internal **Vision Companion** workflow instead of binding itself to one external MCP implementation. That keeps the panel architecture simpler and lets us swap in a local MCP backend later.
+Right now, the plugin ships an internal **Vision Companion** workflow instead of binding itself to one external MCP implementation. The main chat model and the vision backend are now separate roles, which makes it easier to add MCP or skill-based image understanding later.
 
 ## Repository Layout
 
@@ -106,11 +108,16 @@ Right now, the plugin ships an internal **Vision Companion** workflow instead of
 - `Codex Local`
   - reuses the machine's Codex CLI login
   - does not require manually entering an OpenAI API key
-  - now treated as vision-capable by default and can also act as a vision fallback provider
+  - can act as an optional vision backend when you want local Codex image understanding
 - OpenAI-compatible providers
   - can use either an environment variable name or a direct key in Settings
   - if the provider supports vision, it can directly consume attached images
-  - if it is marked as `Vision Fallback`, it can serve as the image-reading companion for text-only main models
+  - text-only models such as `glm-5.1` should stay as the main chat model only; pair them with a separate multimodal provider when image understanding is needed
+- Vision backend
+  - can be `Auto`, `Disabled`, a specific provider, or `Codex Local`
+  - `Auto` only considers non-Codex providers that pass the model-aware vision check
+  - `Codex Local` is used only when explicitly selected as the vision backend
+  - future `MCP` and `Skill` modes are reserved in Settings so the config shape is ready for those backends
 
 ## Documentation
 

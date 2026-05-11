@@ -1,4 +1,4 @@
-"""Provider configuration and external config discovery."""
+"""Provider and vision backend configuration."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ class ProviderConfig:
     api_key_env: str = ""
     model: str = ""
     supports_reasoning: bool = True
-    supports_vision: bool = True
+    supports_vision: bool = False
     use_as_vision_fallback: bool = False
     default_thinking_level: str = "中"
     source: str = "custom"
@@ -93,6 +93,44 @@ class ExternalConfigHint:
     note: str = ""
 
 
+@dataclass
+class VisionBackendConfig:
+    mode: str = "auto"
+    target: str = ""
+
+    def normalized_mode(self) -> str:
+        mode = (self.mode or "auto").strip().lower()
+        if mode in {"auto", "disabled", "provider", "codex", "mcp", "skill"}:
+            return mode
+        return "auto"
+
+
+def model_name_is_known_text_only(model: str) -> bool:
+    normalized = (model or "").strip().lower().replace("_", "-")
+    if not normalized:
+        return True
+    vision_markers = ("vision", "vl", "glm-4v", "glm-4.1v", "qwen-vl", "gemini", "claude-3", "gpt-4o", "gpt-5")
+    if any(marker in normalized for marker in vision_markers):
+        return False
+    text_only_prefixes = (
+        "glm-5.1",
+        "glm-5-turbo",
+        "glm-4.7",
+        "deepseek-",
+        "deepseek_",
+        "qwen2.5",
+        "qwen3",
+        "minimax-m",
+    )
+    return any(normalized == prefix or normalized.startswith(f"{prefix}-") for prefix in text_only_prefixes)
+
+
+def provider_model_allows_vision(provider: ProviderConfig) -> bool:
+    if provider.source in {"codex", "mock"}:
+        return bool(provider.supports_vision)
+    return bool(provider.supports_vision) and not model_name_is_known_text_only(provider.model)
+
+
 def default_providers() -> List[ProviderConfig]:
     codex_model = _read_codex_default_model()
     return [
@@ -103,7 +141,7 @@ def default_providers() -> List[ProviderConfig]:
             model=codex_model or "gpt-5.5",
             supports_reasoning=True,
             supports_vision=True,
-            use_as_vision_fallback=True,
+            use_as_vision_fallback=False,
             default_thinking_level="中",
             source="codex",
         ),
@@ -150,7 +188,6 @@ def load_providers() -> List[ProviderConfig]:
             provider.source = "codex"
             provider.name = "Codex Local"
             provider.supports_vision = True
-            provider.use_as_vision_fallback = True
         key = (provider.source, provider.name)
         if key in index_by_key:
             providers[index_by_key[key]] = provider
@@ -164,6 +201,37 @@ def save_providers(providers: List[ProviderConfig]) -> None:
     custom = [asdict(p) for p in providers if p.source != "mock"]
     raw = load_app_config()
     raw["providers"] = custom
+    save_app_config(raw)
+
+
+def load_vision_backend() -> VisionBackendConfig:
+    raw = load_app_config()
+    item = raw.get("vision_backend", {})
+    if isinstance(item, dict):
+        try:
+            return VisionBackendConfig(**item)
+        except TypeError:
+            pass
+    return VisionBackendConfig()
+
+
+def save_runtime_settings(providers: List[ProviderConfig], vision_backend: VisionBackendConfig) -> None:
+    custom = [asdict(p) for p in providers if p.source != "mock"]
+    raw = load_app_config()
+    raw["providers"] = custom
+    raw["vision_backend"] = asdict(vision_backend)
+    save_app_config(raw)
+
+
+def load_ui_language() -> str:
+    raw = load_app_config()
+    language = str(raw.get("ui_language", "") or "").strip().lower()
+    return language if language in {"zh", "en"} else "zh"
+
+
+def save_ui_language(language: str) -> None:
+    raw = load_app_config()
+    raw["ui_language"] = "en" if language == "en" else "zh"
     save_app_config(raw)
 
 
