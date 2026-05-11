@@ -9,6 +9,7 @@ import json
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 import uuid
@@ -79,6 +80,17 @@ class ModelCallWorker(QtCore.QObject):
         self.image_paths = image_paths
         self.cwd = cwd
         self.thinking_level = thinking_level
+        self._cancel_event = threading.Event()
+        self._process_holder: Dict[str, object] = {}
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+        process = self._process_holder.get("process")
+        if process is not None:
+            try:
+                process.terminate()
+            except Exception:
+                pass
 
     def run(self) -> None:
         try:
@@ -88,10 +100,18 @@ class ModelCallWorker(QtCore.QObject):
                     image_paths=self.image_paths,
                     model=self.provider.model,
                     cwd=self.cwd,
+                    cancel_event=self._cancel_event,
+                    process_holder=self._process_holder,
                 )
+                if self._cancel_event.is_set():
+                    self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                    return
                 detail = f"Local Codex reply received via {self.provider.model or 'default model'}."
                 self.finished.emit(self.task_id, response, "生成回复", detail, "success")
             else:
+                if self._cancel_event.is_set():
+                    self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                    return
                 response = send_chat(
                     provider=self.provider,
                     system_prompt=self.system_prompt,
@@ -100,11 +120,20 @@ class ModelCallWorker(QtCore.QObject):
                     thinking_level=self.thinking_level,
                     max_tokens=1400,
                 )
+                if self._cancel_event.is_set():
+                    self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                    return
                 detail = f"Live provider response received via {self.provider.name} ({build_reasoning_effort(self.thinking_level)} reasoning)."
                 self.finished.emit(self.task_id, response, "生成回复", detail, "success")
         except (CodexCallError, ProviderCallError) as exc:
+            if self._cancel_event.is_set():
+                self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                return
             self.finished.emit(self.task_id, f"模型调用失败：{exc}", "模型调用失败", str(exc), "error")
         except Exception as exc:
+            if self._cancel_event.is_set():
+                self.finished.emit(self.task_id, "请求已停止。", "已停止", "Model call was stopped before completion.", "warning")
+                return
             self.finished.emit(self.task_id, f"模型调用异常：{exc}", "模型调用异常", str(exc), "error")
 
 
@@ -442,6 +471,13 @@ class AgentSession(QtCore.QObject):
 
     def stop(self) -> None:
         if self._busy:
+            worker = self._active_worker
+            if worker is not None:
+                try:
+                    worker.cancel()
+                except Exception:
+                    pass
+            self._add_message("assistant", "已停止当前模型请求。")
             self._add_event("停止任务", "Current preview task was marked as stopped.", "warning")
             self.save_autosaved_conversations()
         self._active_task_id = None
@@ -601,11 +637,33 @@ class AgentSession(QtCore.QObject):
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(self._clear_worker_refs)
+        thread.finished.connect(lambda task_id=task_id, thread=thread: self._clear_worker_refs(task_id, thread))
         self._active_thread = thread
         self._active_worker = worker
+        self._add_message("thought", self._format_live_request_plan(context, image_paths))
         self._add_event("后台思考", "Model call is running in a background thread; Houdini remains usable.", "running")
         thread.start()
+
+    def _format_live_request_plan(self, context: Dict[str, object], image_paths: List[str]) -> str:
+        return json.dumps(
+            {
+                "status": "waiting_for_model",
+                "provider": self.current_provider.name,
+                "model": self.current_provider.model,
+                "thinking": self.current_thinking_level,
+                "tools_available": ["create_node", "apply_code", "inspect_selection", "capture_viewport", "analyze_scene"],
+                "context": {
+                    "hip": context.get("hip_file", ""),
+                    "network": context.get("network", ""),
+                    "selected_nodes": context.get("selected_nodes", []),
+                    "errors": context.get("errors", []),
+                    "images": len(image_paths),
+                },
+                "note": "The model is deciding whether to call a Houdini tool. Press Stop to cancel before execution.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
 
     def _model_call_finished(self, task_id: str, response: str, event_title: str, event_detail: str, status: str) -> None:
         if task_id != self._active_task_id:
@@ -734,7 +792,11 @@ class AgentSession(QtCore.QObject):
             return ""
         return match.group(1).strip()
 
-    def _clear_worker_refs(self) -> None:
+    def _clear_worker_refs(self, task_id: str = "", thread=None) -> None:
+        if thread is not None and self._active_thread is not thread:
+            return
+        if task_id and self._active_task_id not in {"", None, task_id}:
+            return
         self._active_thread = None
         self._active_worker = None
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 from typing import Iterable, Optional
 
 
@@ -38,6 +39,8 @@ def send_codex_chat(
     model: str = "",
     cwd: Optional[str] = None,
     timeout_seconds: int = 180,
+    cancel_event=None,
+    process_holder: Optional[dict] = None,
 ) -> str:
     codex_exe = find_codex_executable()
     if not codex_exe:
@@ -71,24 +74,51 @@ def send_codex_chat(
             cmd.extend(["--image", str(image_path)])
     cmd.append(prompt)
 
-    result = subprocess.run(
+    process = subprocess.Popen(
         cmd,
         cwd=cwd or str(Path.home()),
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout_seconds,
         encoding="utf-8",
         errors="replace",
     )
-    if result.returncode != 0:
-        stderr = (result.stderr or result.stdout or "").strip()
-        raise CodexCallError(stderr or f"Codex CLI exited with code {result.returncode}.")
+    if process_holder is not None:
+        process_holder["process"] = process
+    started = time.monotonic()
+    while process.poll() is None:
+        if cancel_event is not None and cancel_event.is_set():
+            _terminate_process(process)
+            raise CodexCallError("Codex request was stopped.")
+        if time.monotonic() - started > timeout_seconds:
+            _terminate_process(process)
+            raise CodexCallError(f"Codex CLI timed out after {timeout_seconds} seconds.")
+        time.sleep(0.1)
+    stdout, stderr = process.communicate()
+    if process_holder is not None:
+        process_holder.pop("process", None)
+    if process.returncode != 0:
+        detail = (stderr or stdout or "").strip()
+        raise CodexCallError(detail or f"Codex CLI exited with code {process.returncode}.")
 
     if output_file.exists():
         content = output_file.read_text(encoding="utf-8", errors="replace").strip()
         if content:
             return content
-    stdout = (result.stdout or "").strip()
+    stdout = (stdout or "").strip()
     if stdout:
         return stdout
     raise CodexCallError("Codex CLI completed without returning assistant text.")
+
+
+def _terminate_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+    except Exception:
+        try:
+            process.kill()
+        except Exception:
+            pass
