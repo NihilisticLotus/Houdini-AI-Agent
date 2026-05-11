@@ -100,14 +100,37 @@ class HoudiniAdapter(MockHoudiniAdapter):
             "message": f"选中节点：`{node.path()}`\n类型：`{node.type().nameWithCategory()}`\n参数预览：{', '.join(parms[:8])}",
         }
 
-    def create_node_preview(self, thinking_level: str) -> Dict[str, object]:
+    def create_node_preview(self, thinking_level: str, request_text: str = "") -> Dict[str, object]:
         hou = self.hou
         events: List[Dict[str, str]] = []
         created_node = None
+        requested_type = self._node_type_from_text(request_text)
         try:
             with hou.undos.group("Houdini AI Agent Create Node"):
                 selected = hou.selectedNodes()
-                if selected:
+                if requested_type:
+                    parent = selected[-1].parent() if selected else self._current_network()
+                    if parent.childTypeCategory().name() == "Object":
+                        geo = parent.createNode("geo", node_name=f"agent_{requested_type}_geo")
+                        file_node = geo.node("file1")
+                        if file_node is not None:
+                            try:
+                                file_node.destroy()
+                            except Exception:
+                                pass
+                        created_node = geo.createNode(requested_type, node_name=f"agent_{requested_type}1")
+                        geo.layoutChildren()
+                        geo.moveToGoodPosition()
+                        events.append({"title": "创建 Geometry 容器", "detail": geo.path(), "status": "success"})
+                    else:
+                        created_node = parent.createNode(requested_type, node_name=f"agent_{requested_type}1")
+                        parent.layoutChildren()
+                    created_node.setDisplayFlag(True)
+                    created_node.setRenderFlag(True)
+                    created_node.moveToGoodPosition()
+                    created_node.setSelected(True, clear_all_selected=True)
+                    events.append({"title": "创建指定节点", "detail": f"{created_node.path()} ({requested_type})", "status": "success"})
+                elif selected:
                     source = selected[-1]
                     created_node = source.createOutputNode("null", node_name="OUT_AGENT_PREVIEW")
                     created_node.setDisplayFlag(True)
@@ -305,6 +328,111 @@ class HoudiniAdapter(MockHoudiniAdapter):
             if parm is not None:
                 return parm
         return None
+
+    def _node_type_from_text(self, text: str) -> str:
+        lowered = text.lower()
+        aliases = {
+            "box": "box",
+            "cube": "box",
+            "立方体": "box",
+            "盒子": "box",
+            "sphere": "sphere",
+            "球": "sphere",
+            "grid": "grid",
+            "平面": "grid",
+            "plane": "grid",
+            "null": "null",
+            "空节点": "null",
+            "merge": "merge",
+            "transform": "xform",
+            "xform": "xform",
+            "attribwrangle": "attribwrangle",
+            "wrangle": "attribwrangle",
+        }
+        for keyword, node_type in aliases.items():
+            if keyword in lowered or keyword in text:
+                return node_type
+        return ""
+
+    def error_fix_context(self) -> Dict[str, object]:
+        selected = self.hou.selectedNodes()
+        if not selected:
+            return {"ok": False, "message": "No selected node."}
+        selected_node = selected[-1]
+        node = self._find_fix_target(selected_node) or selected_node
+        parm = self._find_code_parm(node)
+        code = ""
+        if parm is not None:
+            try:
+                code = parm.unexpandedString()
+            except Exception:
+                try:
+                    code = parm.evalAsString()
+                except Exception:
+                    code = ""
+        return {
+            "ok": True,
+            "selected_node": selected_node.path(),
+            "target_node": node.path(),
+            "target_type": node.type().nameWithCategory(),
+            "code_parm": parm.name() if parm is not None else "",
+            "code": code,
+            "errors": list(node.errors()),
+            "warnings": list(node.warnings()),
+        }
+
+    def apply_code_to_fix_target(self, fix_context: Dict[str, object], code: str) -> Dict[str, object]:
+        hou = self.hou
+        target_path = str(fix_context.get("target_node", "") or "")
+        parm_name = str(fix_context.get("code_parm", "") or "")
+        if not target_path or not parm_name:
+            return {
+                "title": "Apply model fix",
+                "events": [{"title": "Missing target", "detail": "Model fix has no target node or code parm.", "status": "warning"}],
+                "message": "Model returned code, but there is no remembered editable Houdini parameter to update.",
+            }
+
+        node = hou.node(target_path)
+        if node is None:
+            return {
+                "title": "Apply model fix",
+                "events": [{"title": "Missing node", "detail": target_path, "status": "error"}],
+                "message": f"Could not apply model fix because `{target_path}` no longer exists.",
+            }
+        parm = node.parm(parm_name)
+        if parm is None:
+            return {
+                "title": "Apply model fix",
+                "events": [{"title": "Missing parameter", "detail": f"{target_path}.{parm_name}", "status": "error"}],
+                "message": f"Could not apply model fix because `{parm_name}` no longer exists on `{target_path}`.",
+            }
+
+        events: List[Dict[str, str]] = []
+        try:
+            with hou.undos.group("Houdini AI Agent Apply Model Fix"):
+                parm.set(code)
+                events.append({"title": "Apply model code", "detail": parm.path(), "status": "success"})
+                try:
+                    node.cook(force=True)
+                    events.append({"title": "Cook fixed node", "detail": node.path(), "status": "success"})
+                except Exception as cook_exc:
+                    events.append({"title": "Cook result", "detail": str(cook_exc), "status": "warning"})
+        except Exception as exc:
+            return {
+                "title": "Apply model fix",
+                "events": events + [{"title": "Apply failed", "detail": str(exc), "status": "error"}],
+                "message": f"Model fix could not be applied: {exc}",
+            }
+
+        remaining = list(node.errors()) + list(node.warnings())
+        if remaining:
+            message = "Applied the model code block, but the node still reports:\n" + "\n".join(remaining)
+            status = "warning"
+        else:
+            message = f"Applied the model code block to `{parm.path()}` and the node has no current errors."
+            status = "success"
+        events.append({"title": "Validate model fix", "detail": " | ".join(remaining) if remaining else "No current errors.", "status": status})
+        return {"title": "Apply model fix", "events": events, "message": message}
 
     def _find_fix_target(self, node):
         candidates = [node]

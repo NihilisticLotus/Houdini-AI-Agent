@@ -6,6 +6,7 @@ import base64
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -128,6 +129,7 @@ class AgentSession(QtCore.QObject):
         self._active_task_id: Optional[str] = None
         self._active_thread = None
         self._active_worker = None
+        self._pending_model_fix_context: Optional[Dict[str, object]] = None
         self._loading = False
         self.storage_status = ""
         self.conversations: List[Conversation] = []
@@ -382,7 +384,8 @@ class AgentSession(QtCore.QObject):
 
         if not image_paths and self._run_tool_intent_from_text(text):
             self.save_autosaved_conversations()
-            self._set_busy(False)
+            if self._active_thread is None:
+                self._set_busy(False)
             return
 
         if self.current_provider.source == "mock":
@@ -486,12 +489,19 @@ class AgentSession(QtCore.QObject):
         normalized = text.lower()
         if any(keyword in normalized for keyword in ("修复", "fix", "repair", "错误", "error", "报错")):
             result = self.adapter.fix_error_preview(self.current_thinking_level)
+            should_ask_model = self._tool_result_needs_model_followup(result)
         elif any(keyword in normalized for keyword in ("创建节点", "create node", "new node", "添加节点")):
-            result = self.adapter.create_node_preview(self.current_thinking_level)
+            result = self.adapter.create_node_preview(self.current_thinking_level, request_text=text)
+            should_ask_model = False
+        elif any(keyword in normalized for keyword in ("创建", "建立", "生成", "create", "make", "add")) and self._looks_like_node_creation(text):
+            result = self.adapter.create_node_preview(self.current_thinking_level, request_text=text)
+            should_ask_model = False
         elif any(keyword in normalized for keyword in ("查看选中", "检查选中", "inspect selection", "selected node")):
             result = self.adapter.inspect_selection(self.current_thinking_level)
+            should_ask_model = False
         elif any(keyword in normalized for keyword in ("截图", "捕获视口", "viewport", "capture")):
             result = self.adapter.capture_viewport_preview(self.current_thinking_level)
+            should_ask_model = False
         else:
             return False
 
@@ -500,7 +510,77 @@ class AgentSession(QtCore.QObject):
             self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
         self._add_message("assistant", result.get("message", "Done."), result.get("image_paths", []))
         self.refresh_context()
+        if should_ask_model and self.current_provider.source != "mock":
+            context = self.refresh_context()
+            fix_context = self._error_fix_context()
+            self._pending_model_fix_context = fix_context if fix_context.get("ok") else None
+            prompt = self._build_fix_followup_prompt(text, context, fix_context, result)
+            self._add_event("调用模型分析", "Local fix rules did not complete the repair; asking the selected model for diagnosis.", "running")
+            self._start_model_call(
+                prompt=self._build_codex_prompt(prompt, context) if self.current_provider.source == "codex" else prompt,
+                system_prompt=self._build_system_prompt(context),
+                image_paths=[],
+                context=context,
+            )
+        else:
+            self._set_busy(False)
         return True
+
+    def _looks_like_node_creation(self, text: str) -> bool:
+        lowered = text.lower()
+        node_words = (
+            "box",
+            "cube",
+            "sphere",
+            "grid",
+            "plane",
+            "null",
+            "merge",
+            "transform",
+            "wrangle",
+            "attribwrangle",
+            "立方体",
+            "盒子",
+            "球",
+            "平面",
+            "节点",
+        )
+        return any(word in lowered or word in text for word in node_words)
+
+    def _tool_result_needs_model_followup(self, result: Dict[str, object]) -> bool:
+        if any(event.get("status") == "success" and event.get("title") in {"更新代码参数", "重新 Cook"} for event in result.get("events", [])):
+            return False
+        message = str(result.get("message", ""))
+        event_text = " ".join(f"{event.get('title', '')} {event.get('detail', '')}" for event in result.get("events", []))
+        combined = f"{message} {event_text}"
+        return any(fragment in combined for fragment in ("未匹配", "没有匹配", "仅诊断", "仍有错误", "失败"))
+
+    def _error_fix_context(self) -> Dict[str, object]:
+        getter = getattr(self.adapter, "error_fix_context", None)
+        if getter is None:
+            return {}
+        try:
+            return getter()
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def _build_fix_followup_prompt(
+        self,
+        user_text: str,
+        context: Dict[str, object],
+        fix_context: Dict[str, object],
+        tool_result: Dict[str, object],
+    ) -> str:
+        return (
+            "The Houdini plugin attempted its local executable repair tool, but it did not finish the repair.\n"
+            "Analyze the error and produce a practical next repair. Be specific about the code line or parameter.\n"
+            "If the code can be fixed by editing the shown snippet, provide the corrected full snippet in a fenced code block.\n"
+            "Do not say the plugin has no Houdini interface; it just ran a Houdini tool and can apply supported edits.\n\n"
+            f"User request: {user_text}\n"
+            f"Scene context: {context}\n"
+            f"Tool result: {tool_result}\n"
+            f"Error/code context: {fix_context}\n"
+        )
 
     def _start_model_call(
         self,
@@ -538,9 +618,39 @@ class AgentSession(QtCore.QObject):
             return
         self._add_event(event_title, event_detail, status)
         self._add_message("assistant", response)
+        if status == "success":
+            self._apply_pending_model_fix(response)
+        else:
+            self._pending_model_fix_context = None
         self.save_autosaved_conversations()
         self._active_task_id = None
         self._set_busy(False)
+
+    def _apply_pending_model_fix(self, response: str) -> None:
+        fix_context = self._pending_model_fix_context
+        self._pending_model_fix_context = None
+        if not fix_context:
+            return
+        code = self._extract_first_code_block(response)
+        if not code:
+            self._add_event("模型修复未自动应用", "No fenced code block was found in the model response.", "warning")
+            return
+        applier = getattr(self.adapter, "apply_code_to_fix_target", None)
+        if applier is None:
+            self._add_event("模型修复未自动应用", "Current adapter does not support applying code edits.", "warning")
+            return
+        result = applier(fix_context, code)
+        self._add_event(result.get("title", "Apply model fix"), "Applied from model response after repair analysis.", "info")
+        for event in result.get("events", []):
+            self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
+        self._add_message("assistant", result.get("message", "Model fix applied."))
+        self.refresh_context()
+
+    def _extract_first_code_block(self, text: str) -> str:
+        match = re.search(r"```[^\n`]*\n(.*?)```", text, re.DOTALL)
+        if not match:
+            return ""
+        return match.group(1).strip()
 
     def _clear_worker_refs(self) -> None:
         self._active_thread = None
