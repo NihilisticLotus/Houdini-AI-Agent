@@ -37,6 +37,10 @@
   - `glm-5.1` / `glm-5-turbo` as text-only
   - GPT / Claude / Gemini vision-capable families
   - user overrides with a visible warning when the model name conflicts with the selected capability
+- Add UI tests for the intended routing matrix:
+  - active `Codex Local` + image uses Codex directly
+  - active `glm-5.1` + Auto never invokes Codex implicitly
+  - active `glm-5.1` + explicit Codex vision backend uses Codex as companion
 - Add automatic provider capability probes so the plugin can verify whether a model really accepts images instead of relying only on manual flags
 - Add image understanding cache per conversation so repeated screenshots do not re-spend tokens unnecessarily
 - Add OCR-focused fallback mode for screenshots dominated by text or error logs

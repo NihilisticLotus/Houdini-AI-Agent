@@ -8,6 +8,7 @@ from houdini_ai_agent.core.config import (
     ProviderConfig,
     VisionBackendConfig,
     discover_external_configs,
+    provider_is_codex_local,
     provider_model_allows_vision,
     save_runtime_settings,
 )
@@ -155,7 +156,7 @@ class SettingsDialog(QtWidgets.QDialog):
         provider_names = [
             provider.name
             for provider in self.providers
-            if provider.source != "mock" and provider.source != "codex" and provider_model_allows_vision(provider)
+            if provider.source != "mock" and not provider_is_codex_local(provider) and provider_model_allows_vision(provider)
         ]
         self.vision_target_combo.blockSignals(True)
         self.vision_target_combo.clear()
@@ -180,7 +181,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.vision_target_combo.setEnabled(mode not in {"auto", "disabled", "codex"})
         self.vision_target_combo.setEditable(mode in {"provider", "mcp", "skill"})
         if mode == "auto":
-            text = "自动模式只会选择非 Codex 的视觉 provider；如需使用 Codex 读图，请显式选择 Codex Local。"
+            text = "自动模式不会把 Codex 当作其他主模型的隐式兜底；当主模型就是 Codex Local 时会直接读图。如需让 GLM 等文本模型借用 Codex，请显式选择 Codex Local。"
         elif mode == "disabled":
             text = "插件仍可正常聊天，但纯文本模型不会获得图片理解结果。"
         elif mode == "provider":

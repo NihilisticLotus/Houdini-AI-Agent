@@ -23,6 +23,7 @@ from houdini_ai_agent.core.config import (
     load_ui_language,
     load_vision_backend,
     provider_model_allows_vision,
+    provider_is_codex_local,
     save_ui_language,
 )
 from houdini_ai_agent.core.openai_compat import (
@@ -837,7 +838,7 @@ class AgentSession(QtCore.QObject):
     ) -> None:
         task_id = self._active_task_id or uuid.uuid4().hex
         self._active_task_id = task_id
-        vision_resolution = self._find_vision_fallback_provider(self.current_provider) if image_paths else VisionBackendResolution(None, "disabled")
+        vision_resolution = self._resolve_vision_backend(self.current_provider) if image_paths else VisionBackendResolution(None, "disabled")
         vision_provider = vision_resolution.provider
         response_language = self._preferred_response_language(vision_prompt)
         thread = QtCore.QThread(self)
@@ -1192,6 +1193,11 @@ class AgentSession(QtCore.QObject):
             f"User request:\n{user_text}"
         )
 
+    def _resolve_vision_backend(self, primary: ProviderConfig) -> VisionBackendResolution:
+        if provider_can_read_images(primary):
+            return VisionBackendResolution(primary, "direct")
+        return self._find_vision_fallback_provider(primary)
+
     def _find_vision_fallback_provider(self, primary: ProviderConfig) -> VisionBackendResolution:
         mode = self.vision_backend.normalized_mode()
         if mode == "disabled":
@@ -1223,7 +1229,7 @@ class AgentSession(QtCore.QObject):
         for provider in self.providers:
             if provider.name == primary.name:
                 continue
-            if provider.source == "codex":
+            if provider_is_codex_local(provider):
                 continue
             if not self._provider_ready_for_vision(provider):
                 continue
@@ -1235,7 +1241,7 @@ class AgentSession(QtCore.QObject):
             return VisionBackendResolution(explicit_candidates[0], mode)
         if fallback_candidates:
             return VisionBackendResolution(fallback_candidates[0], mode)
-        return VisionBackendResolution(None, mode, "自动模式没有找到可用的非 Codex 视觉后端。请勾选一个支持视觉的 provider，或在视觉后端里显式选择 Codex Local。")
+        return VisionBackendResolution(None, mode, "自动模式没有找到可用的非 Codex 视觉后端。当前主模型不是 Codex Local，因此不会隐式调用 Codex；请切换到 Codex Local、勾选一个支持视觉的 provider，或在视觉后端里显式选择 Codex Local。")
 
     def _provider_by_name(self, name: str) -> Optional[ProviderConfig]:
         for provider in self.providers:

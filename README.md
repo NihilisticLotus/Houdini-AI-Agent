@@ -45,6 +45,7 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - stronger tool-panel visual styling
 - Vision routing improvements
   - `Codex Local` is available as an optional vision companion instead of an implied default
+  - if the active provider itself is `Codex Local`, attached images are sent directly to Codex Local even while vision mode is `Auto`
   - known text-only models such as `glm-5.1` are blocked from direct image input even if an old config accidentally marked them as vision-capable
   - if a provider replies as if no image was received, the plugin can retry through the resolved vision backend
   - thought display is now concise and collapsible instead of exposing raw planning JSON
@@ -58,11 +59,19 @@ After reviewing [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suichi
 - better in-chat affordances such as clickable node paths
 - a stronger “tool surface” feel instead of plain chat
 
+Its vision implementation is model-first:
+
+- a model feature registry marks models such as `glm-5.1` as non-vision and GPT / Claude / Gemini families as vision-capable
+- the input layer only builds multimodal `text + image_url` content when the current model supports vision
+- older image payloads are stripped from conversation history to avoid base64 context bloat
+- viewport screenshots are injected only when the active model supports vision
+
 We adopted the parts that fit our current architecture cleanly:
 
 - clickable node path navigation
 - drag-and-drop image upload
 - richer provider capability handling for vision
+- primary-provider-first image routing: if the current provider is `Codex Local`, images go directly to Codex Local; otherwise `Auto` only searches non-Codex vision providers
 
 Still missing compared with that project:
 
@@ -116,7 +125,7 @@ Right now, the plugin ships an internal **Vision Companion** workflow instead of
 - Vision backend
   - can be `Auto`, `Disabled`, a specific provider, or `Codex Local`
   - `Auto` only considers non-Codex providers that pass the model-aware vision check
-  - `Codex Local` is used only when explicitly selected as the vision backend
+  - `Codex Local` is used directly when it is the active provider, or as a companion only when explicitly selected as the vision backend
   - future `MCP` and `Skill` modes are reserved in Settings so the config shape is ready for those backends
 
 ## Documentation

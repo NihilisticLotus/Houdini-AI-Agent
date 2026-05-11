@@ -72,6 +72,7 @@ This keeps the interaction model simple:
 Recent reliability improvements:
 
 - `Codex Local` is optional and no longer implied as the default fallback
+- when the active provider is `Codex Local`, images are sent directly to Codex Local even in `Auto` vision mode
 - model-aware checks treat `glm-5.1` and similar text-only models as unable to read images, even when older saved settings contain a stale vision flag
 - if a provider answers as if no image arrived, the plugin can retry through the resolved vision backend
 - the collapsible thought block is now concise rather than exposing raw planning JSON
@@ -101,11 +102,14 @@ We also reviewed [Kazama-Suichiku/Houdini-Agent](https://github.com/Kazama-Suich
 - stronger visual/tool-oriented UI treatment
 - clearer capability handling around multimodal models
 
+The reference implementation keeps image input tied to the selected model. It uses a model feature registry to mark models such as `glm-5.1` as non-vision, builds OpenAI-style multimodal `text + image_url` content only when the selected model supports vision, strips older base64 image payloads from history, and injects viewport screenshots only for vision-capable models. This plugin follows that primary-model-first principle, then adds an optional companion backend for text-only main models.
+
 What we adopted in this milestone:
 
 - clickable Houdini node paths that focus the node in the network editor
 - drag-and-drop image input
 - explicit provider-level vision and vision-fallback flags
+- direct Codex Local image routing when Codex Local is the active provider
 
 What remains on our roadmap:
 

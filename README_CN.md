@@ -44,6 +44,7 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
   - 内容更接近 Codex 风格的步骤摘要，而不是内部结构转储
 - 视觉链路修复
   - `Codex Local` 只在显式选择为视觉后端时用于读图，不再被 Auto 模式隐式调用
+  - 如果当前主 provider 本身就是 `Codex Local`，即使视觉模式是 Auto，也会直接把图片交给 Codex Local
   - `glm-5.1` 等已知纯文本模型会被阻止直接读图，即使旧配置里误勾了视觉能力
   - 如果主模型是文本模型，插件会自动寻找可用的非 Codex 视觉后端 provider
   - 如果某个模型回复看起来像“没收到图片”，插件会自动尝试走视觉兜底重试
@@ -61,12 +62,20 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
 - 聊天内容本身更像工具界面，而不只是文字窗口
 - 可点击、可继续操作的交互更强
 
+它的视觉实现是“当前模型优先”的：
+
+- 通过模型特性表标记哪些模型支持图片，`glm-5.1` / `glm-5-turbo` 被标记为非视觉模型
+- 只有当前模型支持视觉时，输入层才构造 `text + image_url` 多模态消息
+- 旧轮次图片会从上下文中剥离，避免 base64 图片撑爆上下文
+- 视口截图也只在当前模型支持视觉时注入给模型
+
 已经吸收并落地的部分：
 
 - 节点路径点击跳转
 - 图片拖拽上传
 - 更明确的视觉能力与视觉兜底机制
 - 更简洁的可折叠思考过程
+- 主 provider 优先的图片路由：当前 provider 是 Codex Local 时直接读图；否则 Auto 只找非 Codex 视觉 provider
 
 目前仍落后于该项目的部分：
 
@@ -109,7 +118,7 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
 - `Codex Local`
   - 复用本机 Codex CLI 登录态
   - 不需要手动填写 OpenAI API key
-  - 可以作为可选视觉后端，但必须在视觉后端里显式选择
+  - 作为当前主 provider 时会直接读图；作为 GLM 等文本模型的 companion 时必须在视觉后端里显式选择
 - OpenAI-compatible providers
   - 可以填写环境变量名，也可以直接填写 key
   - 如果 provider 支持视觉，可以直接读取图片

@@ -125,8 +125,18 @@ def model_name_is_known_text_only(model: str) -> bool:
     return any(normalized == prefix or normalized.startswith(f"{prefix}-") for prefix in text_only_prefixes)
 
 
+def provider_is_codex_local(provider: ProviderConfig) -> bool:
+    return (
+        provider.source == "codex"
+        or provider.base_url.strip() == "codex://local-cli"
+        or provider.name.strip().lower() == "codex local"
+    )
+
+
 def provider_model_allows_vision(provider: ProviderConfig) -> bool:
-    if provider.source in {"codex", "mock"}:
+    if provider_is_codex_local(provider):
+        return True
+    if provider.source == "mock":
         return bool(provider.supports_vision)
     return bool(provider.supports_vision) and not model_name_is_known_text_only(provider.model)
 
