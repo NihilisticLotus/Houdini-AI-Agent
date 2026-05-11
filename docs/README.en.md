@@ -2,7 +2,9 @@
 
 ## Overview
 
-Houdini AI Agent is a Houdini 21 Python Panel plugin built with PySide. It is designed to keep AI-assisted scene analysis, node work, image-aware prompting, and future repair automation inside Houdini instead of splitting work across multiple apps.
+Houdini AI Agent is a Houdini 21 Python Panel plugin built with PySide. It is designed to keep AI-assisted scene analysis, node work, image-aware prompting, mode-aware planning, and repair automation inside Houdini instead of splitting work across multiple apps.
+
+Local package note: the checked-in package file currently points `HOUDINI_AI_AGENT_ROOT` at `D:/Project/Houdini/Houdini-AI-Agent`. If you install the repository elsewhere, update `packages/houdini_ai_agent.json` or place an adjusted copy in your Houdini packages directory.
 
 ## Current Feature Set
 
@@ -39,6 +41,24 @@ Houdini AI Agent is a Houdini 21 Python Panel plugin built with PySide. It is de
   - the main chat model can stay text-only
   - image understanding can come from another provider or optional `Codex Local`
   - future `MCP` and `Skill` modes already have reserved config entries in Settings
+- Last selected provider, model, thinking level, and work mode are persisted in the app config.
+
+### Work Modes and Tool Policy
+
+- `Ask`
+  - read-only answers, scene analysis, selection inspection, and viewport capture
+  - mutating toolbar actions and model actions are blocked in code
+- `Agent`
+  - normal execution mode for supported scene edits
+  - currently allows node creation and supported code-parameter repair
+- `Plan`
+  - asks the model for a structured plan first
+  - renders the plan as an in-chat card with confirm / cancel controls
+  - confirmation switches to Agent mode and executes steps sequentially
+- `ToolRegistry`
+  - centralizes the current action schemas
+  - filters tools by mode for prompts, toolbar buttons, and model-planned actions
+  - is intentionally small in this pass so the existing action set is guarded before adding broader HOM coverage
 
 ### Houdini Context and Actions
 
@@ -54,6 +74,15 @@ Houdini AI Agent is a Houdini 21 Python Panel plugin built with PySide. It is de
   - `capture_viewport`
   - `create_node`
   - `apply_code`
+- Failed model-planned tool calls can trigger a bounded self-repair prompt, allowing the model to diagnose the failed HOM action and return a corrected action before giving up.
+
+### UI and Workflow Polish
+
+- High-DPI-aware dimensions and stylesheet values with optional `HOUDINI_AI_AGENT_UI_SCALE` override
+- Mode picker beside provider / model / thinking controls
+- Plan cards with ordered steps, dependency notes, risks, confirm, and cancel controls
+- Enter sends chat messages; `Alt+Enter` inserts a newline
+- Defensive display / render flag setting during node creation so unsupported node classes do not abort the whole action
 
 ### Vision Companion Flow
 
@@ -106,6 +135,9 @@ The reference implementation keeps image input tied to the selected model. It us
 
 What we adopted in this milestone:
 
+- first-pass Ask / Agent / Plan mode separation
+- a small `ToolRegistry` with mode-based action filtering
+- confirmable Plan cards and sequential Agent execution after confirmation
 - clickable Houdini node paths that focus the node in the network editor
 - drag-and-drop image input
 - explicit provider-level vision and vision-fallback flags
@@ -113,8 +145,8 @@ What we adopted in this milestone:
 
 What remains on our roadmap:
 
-- full Ask / Agent / Plan modes
-- todo task cards
+- persistent Plan state, plan revision controls, and execution DAGs
+- todo task cards for multi-step runs
 - broader HOM tool coverage
 - richer plugin and rule management surfaces
 
@@ -148,15 +180,18 @@ You can also use the included `Houdini AI` shelf.
 ## Recommended Validation Inside Houdini
 
 1. Open the panel and confirm the context panel updates.
-2. Select a node and click `查看选中节点`.
-3. Ask the agent to create a node such as `Create a box`.
-4. Capture the viewport and confirm the image appears in chat.
-5. Paste an image with `Ctrl+V`.
-6. Configure:
+2. Switch to `Ask` mode and confirm mutating toolbar buttons are disabled while analysis / selection / viewport tools remain available.
+3. Switch to `Agent` mode, select a node, and click `查看选中节点`.
+4. Ask the agent to create a node such as `Create a box`.
+5. Switch to `Plan` mode, request a small multi-step scene change, and confirm that a plan card appears before execution.
+6. Confirm the plan and verify that the panel switches to `Agent` mode and executes the steps sequentially.
+7. Capture the viewport and confirm the image appears in chat.
+8. Paste an image with `Ctrl+V`.
+9. Configure:
    - a text-first main model such as `glm-5.1`
    - a separate multimodal vision backend, or `Codex Local` if you want to use it
    - keep `glm-5.1` out of the vision backend target list because it is a text model
-7. Send an image plus a question and confirm:
+10. Send an image plus a question and confirm:
    - the request stays responsive
    - the image is still understood even though the main model is text-only
 
@@ -173,9 +208,10 @@ If the HIP file is still unsaved, the panel remains usable, but project-local au
 ## Current Limits
 
 - The vision fallback currently uses a second provider, not a bundled local Moondream runtime yet.
-- Tool execution is still intentionally small and safe.
-- Repair flows currently focus on code-parameter replacement and validation, not full graph-wide planning.
+- Tool execution is still intentionally small and guarded by the first-pass registry.
+- Plan cards are session-local runtime objects for now; persistent plan state and revision controls are still on the roadmap.
+- Repair flows can retry failed tool calls, but they still focus on code-parameter replacement and validation rather than full graph-wide planning.
 
 ## Next Steps
 
-See [TODO](E:/Work/Houdini/AI_Agent/TODO.md).
+See [TODO](../TODO.md).

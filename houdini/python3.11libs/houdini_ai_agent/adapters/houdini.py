@@ -51,6 +51,19 @@ class HoudiniAdapter(MockHoudiniAdapter):
             pass
         return {"ok": True, "message": f"Focused node: {node.path()}"}
 
+    def _set_display_render_flags(self, node) -> List[Dict[str, str]]:
+        events: List[Dict[str, str]] = []
+        for method_name, label in (("setDisplayFlag", "display"), ("setRenderFlag", "render")):
+            setter = getattr(node, method_name, None)
+            if setter is None:
+                events.append({"title": "跳过节点标志", "detail": f"{node.path()} does not support {label} flag.", "status": "info"})
+                continue
+            try:
+                setter(True)
+            except Exception as exc:
+                events.append({"title": "设置节点标志失败", "detail": f"{label}: {exc}", "status": "warning"})
+        return events
+
     def get_context(self) -> Dict[str, object]:
         hou = self.hou
         selected = hou.selectedNodes()
@@ -157,16 +170,14 @@ class HoudiniAdapter(MockHoudiniAdapter):
                     else:
                         created_node = parent.createNode(requested_type, node_name=f"agent_{requested_type}1")
                         parent.layoutChildren()
-                    created_node.setDisplayFlag(True)
-                    created_node.setRenderFlag(True)
+                    events.extend(self._set_display_render_flags(created_node))
                     created_node.moveToGoodPosition()
                     created_node.setSelected(True, clear_all_selected=True)
                     events.append({"title": "创建指定节点", "detail": f"{created_node.path()} ({requested_type})", "status": "success"})
                 elif selected:
                     source = selected[-1]
                     created_node = source.createOutputNode("null", node_name="OUT_AGENT_PREVIEW")
-                    created_node.setDisplayFlag(True)
-                    created_node.setRenderFlag(True)
+                    events.extend(self._set_display_render_flags(created_node))
                     created_node.moveToGoodPosition()
                     source.parent().layoutChildren()
                     created_node.setSelected(True, clear_all_selected=True)
@@ -182,8 +193,7 @@ class HoudiniAdapter(MockHoudiniAdapter):
                             except Exception:
                                 pass
                         created_node = geo.createNode("null", node_name="OUT_AGENT_PREVIEW")
-                        created_node.setDisplayFlag(True)
-                        created_node.setRenderFlag(True)
+                        events.extend(self._set_display_render_flags(created_node))
                         geo.layoutChildren()
                         geo.moveToGoodPosition()
                         created_node.setSelected(True, clear_all_selected=True)
@@ -191,8 +201,7 @@ class HoudiniAdapter(MockHoudiniAdapter):
                         events.append({"title": "创建输出节点", "detail": created_node.path(), "status": "success"})
                     else:
                         created_node = network.createNode("null", node_name="OUT_AGENT_PREVIEW")
-                        created_node.setDisplayFlag(True)
-                        created_node.setRenderFlag(True)
+                        events.extend(self._set_display_render_flags(created_node))
                         created_node.moveToGoodPosition()
                         network.layoutChildren()
                         created_node.setSelected(True, clear_all_selected=True)
@@ -240,8 +249,7 @@ class HoudiniAdapter(MockHoudiniAdapter):
                     created_node = parent.createNode(node_type, node_name=node_name or f"agent_{node_type}1")
                     parent.layoutChildren()
 
-                created_node.setDisplayFlag(True)
-                created_node.setRenderFlag(True)
+                events.extend(self._set_display_render_flags(created_node))
                 created_node.moveToGoodPosition()
                 created_node.setSelected(True, clear_all_selected=True)
                 events.append({"title": "Create node", "detail": f"{created_node.path()} ({node_type})", "status": "success"})

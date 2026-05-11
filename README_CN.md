@@ -2,7 +2,9 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它的目标很直接：把多会话 AI 对话、工程上下文读取、图片输入、模型规划、节点操作和错误修复尽量留在 Houdini 内完成。
+Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它的目标很直接：把多会话 AI 对话、工程上下文读取、图片输入、模式化规划、节点操作和错误修复尽量留在 Houdini 内完成。
+
+> 本地 package 说明：仓库里的 `packages/houdini_ai_agent.json` 当前指向 `D:/Project/Houdini/Houdini-AI-Agent`。如果仓库放在其他位置，请修改该 package 文件，或复制一份调整后的 package 到 Houdini packages 目录。
 
 ## 当前能力
 
@@ -27,6 +29,18 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
   - `Codex Local`
   - 自定义 OpenAI-compatible provider
   - `Mock Preview`
+- 输入区旁边的 `Ask / Agent / Plan` 工作模式
+  - `Ask`：只读问答和检查，不修改场景
+  - `Agent`：允许执行当前支持的 Houdini 修改
+  - `Plan`：先生成可确认计划，再切换执行
+- 第一版模式感知 `ToolRegistry`
+  - 集中维护当前工具 schema
+  - 同时约束工具栏按钮和模型规划动作
+  - 在 Ask / Plan 模式下阻止节点创建、代码写回等修改动作
+- 结构化计划卡片
+  - 显示目标、步骤、风险和依赖提示
+  - 支持确认执行 / 取消计划
+  - 确认后自动切换到 Agent 模式按步骤执行
 - 模型规划后可执行的 Houdini 动作
   - 场景分析
   - 选中节点检查
@@ -35,9 +49,27 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
   - 代码参数修复写回
 - 后台请求可取消，Houdini 不会被同步阻塞
 - 按钮触发动作会自动跟随当前界面语言
+- 记住上次选择的 provider、模型、思考级别和工作模式
+- 支持随 Houdini / 系统 DPI 缩放界面，也可用 `HOUDINI_AI_AGENT_UI_SCALE` 覆盖
 
 ## 本次修复与补强
 
+- 工作模式与工具策略
+  - 新增 `Ask / Agent / Plan` 模式选择器，放在模型和思考级别旁边
+  - `Ask` 和 `Plan` 会在代码层阻止会修改 Houdini 场景的工具
+  - `Agent` 保留节点创建、代码参数修复等当前支持的执行动作
+  - 工具栏按钮会根据模式自动禁用，并给出对应提示
+- Plan 工作流
+  - Plan 模式下模型先返回结构化计划，而不是直接执行修改
+  - 聊天中渲染计划卡片，展示步骤、风险、依赖和确认按钮
+  - 确认计划后会切换到 Agent 模式，并按步骤逐个执行
+- 执行可靠性
+  - 工具执行失败时，插件可触发有限次数的自我修复请求，让模型分析失败原因并返回修正后的动作 JSON
+  - 创建节点时会更稳妥地设置 display / render flag，不再因为某类节点不支持对应 flag 就中断整个创建流程
+- 界面与交互
+  - UI 尺寸和样式会随 DPI 缩放，可通过 `HOUDINI_AI_AGENT_UI_SCALE` 手动覆盖
+  - 输入框改为 `Enter` 发送、`Alt+Enter` 换行
+  - 会自动恢复上次使用的 provider、模型、思考级别和工作模式
 - 思考过程展示修复
   - 不再直接暴露大段原始 JSON
   - 改为可折叠的简洁“思考过程”块
@@ -71,6 +103,9 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
 
 已经吸收并落地的部分：
 
+- 第一版 `Ask / Agent / Plan` 模式区分
+- 集中的工具注册表和模式守卫
+- 修改前可确认的 Plan 卡片
 - 节点路径点击跳转
 - 图片拖拽上传
 - 更明确的视觉能力与视觉兜底机制
@@ -79,8 +114,8 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
 
 目前仍落后于该项目的部分：
 
-- 完整的 `Ask / Agent / Plan` 模式
-- Todo 任务卡与执行 DAG
+- Plan 持久化、计划修订控件和执行 DAG
+- Todo 任务卡
 - 插件管理器 / 规则编辑器 / 记忆管理器
 - 更广泛的 HOM 工具覆盖，例如连线、删除、复制、布局、参数批量修改
 
@@ -130,6 +165,6 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
 
 ## 文档
 
-- [English Guide](E:/Work/Houdini/AI_Agent/docs/README.en.md)
-- [README_CN](E:/Work/Houdini/AI_Agent/README_CN.md)
-- [TODO](E:/Work/Houdini/AI_Agent/TODO.md)
+- [English Guide](docs/README.en.md)
+- [README_CN](README_CN.md)
+- [TODO](TODO.md)

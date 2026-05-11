@@ -2,7 +2,9 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keeps AI-assisted scene work inside Houdini with multi-session chat, project-aware autosave, image attachments, optional Codex login reuse, OpenAI-compatible providers, separate vision backend routing, and model-planned Houdini actions.
+Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keeps AI-assisted scene work inside Houdini with multi-session chat, project-aware autosave, image attachments, optional Codex login reuse, OpenAI-compatible providers, separate vision backend routing, and mode-aware model-planned Houdini actions.
+
+> Local package note: the checked-in package file currently points `HOUDINI_AI_AGENT_ROOT` at `D:/Project/Houdini/Houdini-AI-Agent`. If you install the repository elsewhere, update `packages/houdini_ai_agent.json` or place an adjusted copy in your Houdini packages directory.
 
 ## Current Capabilities
 
@@ -21,6 +23,12 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - `Codex Local` using the local Codex CLI login on the same machine
   - custom OpenAI-compatible providers
   - `Mock Preview` offline mode
+- Ask / Agent / Plan work modes beside the composer:
+  - `Ask` keeps tools read-only
+  - `Agent` can execute supported Houdini edits
+  - `Plan` creates a confirmable plan before scene mutation
+- First-pass mode-aware `ToolRegistry` for toolbar and model-planned actions
+- Structured plan cards with confirm / cancel controls and sequential Agent execution
 - Model-planned Houdini actions:
   - scene analysis
   - selection inspection
@@ -29,9 +37,25 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - code-parameter repair application
 - Cancellable background requests
 - UI language follow for button-triggered actions
+- Last provider, model, thinking level, and work mode persistence
+- High-DPI-aware UI scaling with `HOUDINI_AI_AGENT_UI_SCALE` override
 
 ## New in This Milestone
 
+- First-pass **mode and tool policy layer**
+  - `ToolRegistry` now centralizes the current action schemas and the mode policy used in prompts, toolbar buttons, and model-requested actions.
+  - `Ask` and `Plan` block scene-changing actions such as node creation and code application; `Agent` keeps those actions available.
+  - Toolbar buttons now disable or report clearly when the current mode does not allow the mapped tool.
+- First-pass **Plan workflow**
+  - Plan mode asks the model for a structured plan instead of immediately mutating the Houdini scene.
+  - Plans render as chat cards with ordered steps, risk notes, and confirm / cancel buttons.
+  - Confirming a plan switches to Agent mode and executes the steps one at a time, with trace messages for each step.
+- Execution reliability and UI polish
+  - Failed model-planned tool calls can trigger a bounded self-repair follow-up so the model can diagnose the failed action and retry with corrected JSON.
+  - Provider, model, thinking level, and work mode are restored across panel sessions.
+  - UI dimensions now scale with Houdini / OS DPI, and can be overridden with `HOUDINI_AI_AGENT_UI_SCALE`.
+  - Chat input now sends with `Enter` and inserts a newline with `Alt+Enter`.
+  - Houdini display / render flags are set defensively so unsupported node types do not break node creation.
 - Built-in **vision backend routing**
   - If the current main model is text-only, attached images can be summarized by a separate vision backend in Settings.
   - The image summary is then injected into the main model prompt, so text-only models can still work with screenshots and viewport captures.
@@ -68,6 +92,9 @@ Its vision implementation is model-first:
 
 We adopted the parts that fit our current architecture cleanly:
 
+- first-pass Ask / Agent / Plan mode separation
+- a central tool registry for current Houdini actions and mode guards
+- confirmable Plan cards before mutating execution
 - clickable node path navigation
 - drag-and-drop image upload
 - richer provider capability handling for vision
@@ -75,8 +102,8 @@ We adopted the parts that fit our current architecture cleanly:
 
 Still missing compared with that project:
 
-- full Ask / Agent / Plan mode system
-- todo task cards and execution DAGs
+- persistent Plan state, plan revision controls, and execution DAGs
+- todo task cards for multi-step runs
 - plugin manager / rules editor / memory manager
 - broader HOM tool coverage such as connect, delete, copy, and layout nodes
 
@@ -130,6 +157,6 @@ Right now, the plugin ships an internal **Vision Companion** workflow instead of
 
 ## Documentation
 
-- [English Guide](E:/Work/Houdini/AI_Agent/docs/README.en.md)
-- [中文说明](E:/Work/Houdini/AI_Agent/README_CN.md)
-- [TODO](E:/Work/Houdini/AI_Agent/TODO.md)
+- [English Guide](docs/README.en.md)
+- [中文说明](README_CN.md)
+- [TODO](TODO.md)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from houdini_ai_agent.qt import QtCore, QtWidgets
+from houdini_ai_agent.ui.style import scaled
 
 
 class ContextPanel(QtWidgets.QWidget):
@@ -30,14 +31,14 @@ class ContextPanel(QtWidgets.QWidget):
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(10)
+        root.setContentsMargins(scaled(10), scaled(10), scaled(10), scaled(10))
+        root.setSpacing(scaled(10))
 
         title_row = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("工程上下文")
         title.setObjectName("PanelTitle")
         refresh = QtWidgets.QPushButton("刷新")
-        refresh.setFixedWidth(64)
+        refresh.setFixedWidth(scaled(64))
         refresh.clicked.connect(self.refresh_requested.emit)
         title_row.addWidget(title)
         title_row.addStretch(1)
@@ -90,7 +91,7 @@ class ExecutionTrace(QtWidgets.QWidget):
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(6)
+        root.setSpacing(scaled(6))
         title = QtWidgets.QLabel("执行轨迹")
         title.setObjectName("PanelTitle")
         self.list = QtWidgets.QListWidget()

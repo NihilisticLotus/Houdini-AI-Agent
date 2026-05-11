@@ -14,6 +14,7 @@ from houdini_ai_agent.core.config import (
 )
 from houdini_ai_agent.core.session import THINKING_LEVELS
 from houdini_ai_agent.qt import QtCore, QtWidgets
+from houdini_ai_agent.ui.style import scaled
 
 
 class SettingsDialog(QtWidgets.QDialog):
@@ -24,7 +25,7 @@ class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, providers: List[ProviderConfig], vision_backend: VisionBackendConfig, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Houdini AI Agent 设置")
-        self.resize(900, 620)
+        self.resize(scaled(900), scaled(620))
         self.providers = [p for p in providers]
         self.vision_backend = vision_backend
         self._build_ui()
@@ -32,7 +33,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setSpacing(10)
+        root.setSpacing(scaled(10))
 
         intro = QtWidgets.QLabel(
             "配置聊天模型和独立的视觉后端。主模型可以是纯文本模型，图片理解可以交给另一个多模态 provider。"
@@ -138,7 +139,7 @@ class SettingsDialog(QtWidgets.QDialog):
         thinking.setCurrentIndex(index if index >= 0 else 1)
         self.table.setCellWidget(row, 7, thinking)
 
-        self.table.setRowHeight(row, 28)
+        self.table.setRowHeight(row, scaled(28))
 
     def _set_item(self, row: int, column: int, text: str) -> None:
         item = QtWidgets.QTableWidgetItem(text)

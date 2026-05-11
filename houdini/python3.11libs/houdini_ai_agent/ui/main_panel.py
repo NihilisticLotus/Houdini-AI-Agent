@@ -5,10 +5,11 @@ from __future__ import annotations
 from houdini_ai_agent.adapters.houdini import create_best_adapter
 from houdini_ai_agent.core.config import CODEX_MODELS, looks_like_direct_key
 from houdini_ai_agent.core.session import AgentSession, THINKING_LEVELS
+from houdini_ai_agent.core.tool_registry import WORK_MODE_ORDER, WORK_MODES
 from houdini_ai_agent.ui.chat_view import ChatView
 from houdini_ai_agent.ui.context_panel import ContextPanel, ExecutionTrace
 from houdini_ai_agent.ui.settings_dialog import SettingsDialog
-from houdini_ai_agent.ui.style import STYLE
+from houdini_ai_agent.ui.style import build_style, scaled
 from houdini_ai_agent.qt import QtCore, QtWidgets
 
 
@@ -17,15 +18,15 @@ class AgentMainPanel(QtWidgets.QWidget):
         super().__init__(parent)
         self.setObjectName("HoudiniAIAgentPanel")
         self.setWindowTitle("Houdini AI Agent")
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(build_style())
         self.setAutoFillBackground(True)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self._syncing_conversations = False
         self._conversation_filter = ""
         self._left_sidebar_visible = True
         self._right_sidebar_visible = True
-        self._left_sidebar_width = 210
-        self._right_sidebar_width = 310
+        self._left_sidebar_width = scaled(210)
+        self._right_sidebar_width = scaled(310)
         self._focus_mode = False
         self._trace_visible_before_focus = True
         self._action_buttons = {}
@@ -42,8 +43,8 @@ class AgentMainPanel(QtWidgets.QWidget):
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        root.setContentsMargins(scaled(8), scaled(8), scaled(8), scaled(8))
+        root.setSpacing(scaled(8))
 
         root.addWidget(self._build_header())
         root.addWidget(self._build_action_bar())
@@ -53,12 +54,12 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.center_workspace = self._build_center_workspace()
         self.context_panel = ContextPanel()
         self.context_panel.setObjectName("ContextPanel")
-        self.context_panel.setMinimumWidth(290)
+        self.context_panel.setMinimumWidth(scaled(290))
 
         self.main_splitter.addWidget(self.left_sidebar)
         self.main_splitter.addWidget(self.center_workspace)
         self.main_splitter.addWidget(self.context_panel)
-        self.main_splitter.setSizes([210, 780, 310])
+        self.main_splitter.setSizes([scaled(210), scaled(780), scaled(310)])
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setStretchFactor(2, 0)
@@ -66,14 +67,14 @@ class AgentMainPanel(QtWidgets.QWidget):
 
         focus_row = QtWidgets.QHBoxLayout()
         focus_row.setContentsMargins(0, 0, 0, 0)
-        focus_row.setSpacing(6)
+        focus_row.setSpacing(scaled(6))
         self.left_toggle_btn = QtWidgets.QPushButton("◀")
         self.left_toggle_btn.setObjectName("SidebarToggle")
-        self.left_toggle_btn.setFixedWidth(24)
+        self.left_toggle_btn.setFixedWidth(scaled(24))
         self.left_toggle_btn.clicked.connect(self._toggle_left_sidebar)
         self.right_toggle_btn = QtWidgets.QPushButton("▶")
         self.right_toggle_btn.setObjectName("SidebarToggle")
-        self.right_toggle_btn.setFixedWidth(24)
+        self.right_toggle_btn.setFixedWidth(scaled(24))
         self.right_toggle_btn.clicked.connect(self._toggle_right_sidebar)
         focus_row.addWidget(self.left_toggle_btn)
         focus_row.addWidget(self.main_splitter, 1)
@@ -87,12 +88,12 @@ class AgentMainPanel(QtWidgets.QWidget):
         header_widget = QtWidgets.QFrame()
         header_widget.setObjectName("HeaderBar")
         header = QtWidgets.QHBoxLayout(header_widget)
-        header.setContentsMargins(12, 10, 12, 10)
-        header.setSpacing(10)
+        header.setContentsMargins(scaled(12), scaled(10), scaled(12), scaled(10))
+        header.setSpacing(scaled(10))
 
         title_col = QtWidgets.QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
-        title_col.setSpacing(2)
+        title_col.setSpacing(scaled(2))
 
         title = QtWidgets.QLabel("Houdini AI Agent")
         title.setObjectName("AppTitle")
@@ -106,35 +107,35 @@ class AgentMainPanel(QtWidgets.QWidget):
 
         status_col = QtWidgets.QVBoxLayout()
         status_col.setContentsMargins(0, 0, 0, 0)
-        status_col.setSpacing(3)
+        status_col.setSpacing(scaled(3))
         status_col.addWidget(self.adapter_label)
 
         settings_btn = QtWidgets.QPushButton("设置")
-        settings_btn.setFixedWidth(72)
+        settings_btn.setFixedWidth(scaled(72))
         settings_btn.clicked.connect(self._open_settings)
         self.focus_mode_btn = QtWidgets.QPushButton("专注模式")
-        self.focus_mode_btn.setFixedWidth(84)
+        self.focus_mode_btn.setFixedWidth(scaled(84))
         self.focus_mode_btn.clicked.connect(self._toggle_focus_mode)
 
         header.addLayout(title_col)
         header.addStretch(1)
         header.addLayout(status_col)
         self.language_btn = QtWidgets.QPushButton("")
-        self.language_btn.setFixedWidth(74)
+        self.language_btn.setFixedWidth(scaled(74))
         self.language_btn.clicked.connect(self._toggle_ui_language)
         header.addWidget(self.language_btn)
         header.addWidget(self.focus_mode_btn)
         header.addWidget(settings_btn)
         header_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        header_widget.setMaximumHeight(74)
+        header_widget.setMaximumHeight(scaled(74))
         return header_widget
 
     def _build_action_bar(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QFrame()
         bar.setObjectName("ActionBar")
         actions = QtWidgets.QHBoxLayout(bar)
-        actions.setContentsMargins(6, 0, 6, 0)
-        actions.setSpacing(8)
+        actions.setContentsMargins(scaled(6), 0, scaled(6), 0)
+        actions.setSpacing(scaled(8))
         self._add_action_button(actions, "分析工程", "analyze_scene")
         self._add_action_button(actions, "查看选中节点", "inspect_selection")
         self._add_action_button(actions, "创建节点", "create_nodes")
@@ -142,30 +143,30 @@ class AgentMainPanel(QtWidgets.QWidget):
         self._add_action_button(actions, "捕获视口", "capture_viewport")
         actions.addStretch(1)
         bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        bar.setMaximumHeight(42)
+        bar.setMaximumHeight(scaled(42))
         return bar
 
     def _build_session_sidebar(self) -> QtWidgets.QWidget:
         sidebar = QtWidgets.QFrame()
         sidebar.setObjectName("SessionSidebar")
-        sidebar.setMinimumWidth(210)
-        sidebar.setMaximumWidth(280)
+        sidebar.setMinimumWidth(scaled(210))
+        sidebar.setMaximumWidth(scaled(280))
         sidebar.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         layout = QtWidgets.QVBoxLayout(sidebar)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(scaled(10), scaled(10), scaled(10), scaled(10))
+        layout.setSpacing(scaled(8))
 
         row = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("会话")
         title.setObjectName("PanelTitle")
         new_btn = QtWidgets.QPushButton("新建")
-        new_btn.setFixedWidth(50)
+        new_btn.setFixedWidth(scaled(50))
         new_btn.clicked.connect(lambda: self.session.create_conversation("新会话"))
         import_btn = QtWidgets.QPushButton("导入")
-        import_btn.setFixedWidth(50)
+        import_btn.setFixedWidth(scaled(50))
         import_btn.clicked.connect(self._import_conversations)
         export_btn = QtWidgets.QPushButton("导出")
-        export_btn.setFixedWidth(50)
+        export_btn.setFixedWidth(scaled(50))
         export_btn.clicked.connect(lambda: self._export_conversation(self.session.current_conversation_id))
         row.addWidget(title)
         row.addStretch(1)
@@ -199,8 +200,8 @@ class AgentMainPanel(QtWidgets.QWidget):
         center.setObjectName("CenterWorkspace")
         center.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         layout = QtWidgets.QVBoxLayout(center)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(scaled(8), scaled(8), scaled(8), scaled(8))
+        layout.setSpacing(scaled(8))
 
         self.chat = ChatView()
         self.chat.setObjectName("ChatSurface")
@@ -211,8 +212,8 @@ class AgentMainPanel(QtWidgets.QWidget):
 
         self.trace = ExecutionTrace()
         self.trace.setObjectName("ExecutionTrace")
-        self.trace.setMinimumHeight(150)
-        self.trace.setMaximumHeight(190)
+        self.trace.setMinimumHeight(scaled(150))
+        self.trace.setMaximumHeight(scaled(190))
         self.trace.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         layout.addWidget(self.trace)
         return center
@@ -221,45 +222,58 @@ class AgentMainPanel(QtWidgets.QWidget):
         bar = QtWidgets.QFrame()
         bar.setObjectName("ComposerBar")
         layout = QtWidgets.QHBoxLayout(bar)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(10)
+        layout.setContentsMargins(scaled(10), scaled(8), scaled(10), scaled(8))
+        layout.setSpacing(scaled(10))
 
         left = QtWidgets.QHBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(8)
+        left.setSpacing(scaled(8))
         left.addWidget(QtWidgets.QLabel("模型"))
         self.provider_combo = QtWidgets.QComboBox()
-        self.provider_combo.setMinimumWidth(150)
+        self.provider_combo.setMinimumWidth(scaled(150))
         left.addWidget(self.provider_combo)
         self.model_combo = QtWidgets.QComboBox()
         self.model_combo.setEditable(True)
-        self.model_combo.setMinimumWidth(170)
+        self.model_combo.setMinimumWidth(scaled(170))
         left.addWidget(self.model_combo)
         self.provider_status = QtWidgets.QLabel("")
-        self.provider_status.setMinimumWidth(84)
+        self.provider_status.setMinimumWidth(scaled(84))
         self.provider_status.setObjectName("StatusPill")
         left.addWidget(self.provider_status)
 
-        left.addSpacing(10)
+        left.addSpacing(scaled(10))
+        self.mode_label = QtWidgets.QLabel("模式")
+        left.addWidget(self.mode_label)
+        self.mode_combo = QtWidgets.QComboBox()
+        for mode in WORK_MODE_ORDER:
+            meta = WORK_MODES[mode]
+            self.mode_combo.addItem(meta.label, mode)
+            self.mode_combo.setItemData(self.mode_combo.count() - 1, meta.description, QtCore.Qt.ToolTipRole)
+        mode_index = self.mode_combo.findData(self.session.work_mode)
+        self.mode_combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+        self.mode_combo.setMinimumWidth(scaled(86))
+        left.addWidget(self.mode_combo)
+
+        left.addSpacing(scaled(10))
         left.addWidget(QtWidgets.QLabel("思考"))
         self.thinking_combo = QtWidgets.QComboBox()
         self.thinking_combo.addItems(list(THINKING_LEVELS.keys()))
-        self.thinking_combo.setCurrentText("中")
-        self.thinking_combo.setMinimumWidth(74)
+        self.thinking_combo.setCurrentText(self.session.current_thinking_level)
+        self.thinking_combo.setMinimumWidth(scaled(74))
         left.addWidget(self.thinking_combo)
 
-        self.thinking_hint = QtWidgets.QLabel(THINKING_LEVELS["中"]["description"])
+        self.thinking_hint = QtWidgets.QLabel(THINKING_LEVELS[self.session.current_thinking_level]["description"])
         self.thinking_hint.setObjectName("HintText")
         left.addWidget(self.thinking_hint, 1)
 
         self.clear_messages_btn = QtWidgets.QPushButton("清空消息")
-        self.clear_messages_btn.setFixedWidth(78)
+        self.clear_messages_btn.setFixedWidth(scaled(78))
         self.clear_messages_btn.clicked.connect(self._clear_current_conversation_messages)
 
         layout.addLayout(left, 1)
         layout.addWidget(self.clear_messages_btn)
         bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        bar.setMaximumHeight(48)
+        bar.setMaximumHeight(scaled(48))
         return bar
 
     def _wire(self) -> None:
@@ -267,6 +281,8 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.chat.stop_requested.connect(self.session.stop)
         self.chat.delete_message_requested.connect(self._delete_single_message)
         self.chat.node_link_clicked.connect(self._focus_node_from_chat)
+        self.chat.plan_confirm_requested.connect(self.session.confirm_plan)
+        self.chat.plan_cancel_requested.connect(self.session.cancel_plan)
         self.context_panel.refresh_requested.connect(self.session.refresh_context)
 
         self.session.message_added.connect(self.chat.add_message)
@@ -278,9 +294,11 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.conversations_changed.connect(self._refresh_conversation_list)
         self.session.conversation_changed.connect(self._load_conversation)
         self.session.storage_status_changed.connect(self._set_storage_status)
+        self.session.work_mode_changed.connect(self._session_work_mode_changed)
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
         self.model_combo.currentTextChanged.connect(self._model_changed)
+        self.mode_combo.currentIndexChanged.connect(self._work_mode_changed)
         self.thinking_combo.currentTextChanged.connect(self._thinking_changed)
 
     def _add_action_button(self, layout, label: str, action: str) -> None:
@@ -433,16 +451,16 @@ class AgentMainPanel(QtWidgets.QWidget):
     def _toggle_left_sidebar(self) -> None:
         sizes = self.main_splitter.sizes()
         if self._left_sidebar_visible:
-            self._left_sidebar_width = max(160, sizes[0])
+            self._left_sidebar_width = max(scaled(160), sizes[0])
             self.left_sidebar.hide()
             self.main_splitter.setSizes([0, sizes[1] + sizes[0], sizes[2]])
             self.left_toggle_btn.setText("▶")
             self._left_sidebar_visible = False
         else:
             self.left_sidebar.show()
-            total = sum(self.main_splitter.sizes()) or 1200
+            total = sum(self.main_splitter.sizes()) or scaled(1200)
             right = self.main_splitter.sizes()[2]
-            center = max(420, total - self._left_sidebar_width - right)
+            center = max(scaled(420), total - self._left_sidebar_width - right)
             self.main_splitter.setSizes([self._left_sidebar_width, center, right])
             self.left_toggle_btn.setText("◀")
             self._left_sidebar_visible = True
@@ -450,16 +468,16 @@ class AgentMainPanel(QtWidgets.QWidget):
     def _toggle_right_sidebar(self) -> None:
         sizes = self.main_splitter.sizes()
         if self._right_sidebar_visible:
-            self._right_sidebar_width = max(240, sizes[2])
+            self._right_sidebar_width = max(scaled(240), sizes[2])
             self.context_panel.hide()
             self.main_splitter.setSizes([sizes[0], sizes[1] + sizes[2], 0])
             self.right_toggle_btn.setText("◀")
             self._right_sidebar_visible = False
         else:
             self.context_panel.show()
-            total = sum(self.main_splitter.sizes()) or 1200
+            total = sum(self.main_splitter.sizes()) or scaled(1200)
             left = self.main_splitter.sizes()[0]
-            center = max(420, total - left - self._right_sidebar_width)
+            center = max(scaled(420), total - left - self._right_sidebar_width)
             self.main_splitter.setSizes([left, center, self._right_sidebar_width])
             self.right_toggle_btn.setText("▶")
             self._right_sidebar_visible = True
@@ -551,6 +569,22 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.set_thinking_level(level)
         self.thinking_hint.setText(THINKING_LEVELS[level]["description"])
 
+    def _work_mode_changed(self, _index: int = -1) -> None:
+        if not hasattr(self, "mode_combo"):
+            return
+        mode = str(self.mode_combo.currentData() or "agent")
+        self.session.set_work_mode(mode)
+        self._update_mode_controls()
+
+    def _session_work_mode_changed(self, mode: str) -> None:
+        if hasattr(self, "mode_combo"):
+            self.mode_combo.blockSignals(True)
+            index = self.mode_combo.findData(mode)
+            if index >= 0:
+                self.mode_combo.setCurrentIndex(index)
+            self.mode_combo.blockSignals(False)
+        self._update_mode_controls()
+
     def _toggle_ui_language(self) -> None:
         next_language = "en" if self.session.ui_language == "zh" else "zh"
         self.session.set_ui_language(next_language)
@@ -562,6 +596,8 @@ class AgentMainPanel(QtWidgets.QWidget):
         if hasattr(self, "language_btn"):
             self.language_btn.setText("中文" if is_english else "English")
             self.language_btn.setToolTip("Switch to Chinese" if is_english else "切换到英文")
+        if hasattr(self, "mode_label"):
+            self.mode_label.setText("Mode" if is_english else "模式")
         if hasattr(self, "_action_buttons"):
             labels = {
                 "analyze_scene": ("Analyze Scene", "分析工程"),
@@ -573,6 +609,7 @@ class AgentMainPanel(QtWidgets.QWidget):
             for action, button in self._action_buttons.items():
                 english, chinese = labels.get(action, (action, action))
                 button.setText(english if is_english else chinese)
+        self._update_mode_controls()
 
     def _update_provider_status(self) -> None:
         provider = self.session.current_provider
@@ -607,10 +644,19 @@ class AgentMainPanel(QtWidgets.QWidget):
         else:
             QtWidgets.QMessageBox.warning(self, "Node Focus", result.get("message", node_path))
 
+    def _update_mode_controls(self) -> None:
+        if hasattr(self, "mode_combo"):
+            self.mode_combo.setToolTip(self.session.tool_registry.mode_description(self.session.work_mode))
+        busy = getattr(self.session, "busy", False)
+        for action, button in getattr(self, "_action_buttons", {}).items():
+            allowed = self.session.toolbar_action_allowed(action)
+            button.setEnabled((not busy) and allowed)
+            button.setToolTip(self.session.toolbar_action_tooltip(action))
+
     def _set_actions_busy(self, busy: bool) -> None:
-        for button in self.findChildren(QtWidgets.QPushButton):
-            if button.property("agent_action"):
-                button.setEnabled(not busy)
+        for action, button in getattr(self, "_action_buttons", {}).items():
+            button.setEnabled((not busy) and self.session.toolbar_action_allowed(action))
+            button.setToolTip(self.session.toolbar_action_tooltip(action))
         if hasattr(self, "clear_messages_btn"):
             self.clear_messages_btn.setEnabled(not busy)
 

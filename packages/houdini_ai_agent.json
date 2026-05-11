@@ -2,7 +2,7 @@
   "env": [
     {
       "HOUDINI_AI_AGENT_ROOT": {
-        "value": "E:/Work/Houdini/AI_Agent",
+        "value": "D:/Project/Houdini/Houdini-AI-Agent",
         "method": "replace"
       }
     }

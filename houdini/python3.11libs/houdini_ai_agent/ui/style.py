@@ -1,9 +1,131 @@
 """Panel stylesheet."""
 
+from __future__ import annotations
 
-STYLE = """
+import os
+
+from houdini_ai_agent.qt import QtWidgets
+
+
+def resolve_ui_scale(scale: float | None = None) -> float:
+    """Return a UI scale that follows the current screen DPI when possible."""
+    if scale is not None:
+        return _clamp_scale(scale)
+
+    override = os.environ.get("HOUDINI_AI_AGENT_UI_SCALE", "").strip()
+    if override:
+        try:
+            return _clamp_scale(float(override))
+        except ValueError:
+            pass
+
+    detected = 1.0
+    app = QtWidgets.QApplication.instance()
+    if app is not None:
+        screen = app.primaryScreen()
+        if screen is not None:
+            try:
+                detected = max(detected, float(screen.logicalDotsPerInch()) / 96.0)
+            except Exception:
+                pass
+            try:
+                detected = max(detected, float(screen.devicePixelRatio()))
+            except Exception:
+                pass
+        try:
+            point_size = float(app.font().pointSizeF())
+            if point_size > 0:
+                detected = max(detected, point_size / 9.0)
+        except Exception:
+            pass
+    detected = max(detected, _detect_windows_ui_scale())
+    return _clamp_scale(detected)
+
+
+def scaled(value: int | float, scale: float | None = None) -> int:
+    return max(1, int(round(float(value) * resolve_ui_scale(scale))))
+
+
+def _clamp_scale(scale: float) -> float:
+    return max(1.0, min(float(scale), 2.25))
+
+
+def _detect_windows_ui_scale() -> float:
+    if os.name != "nt":
+        return 1.0
+    try:
+        import ctypes
+
+        dpi = ctypes.windll.shcore.GetDpiForSystem()
+        if dpi:
+            return float(dpi) / 96.0
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        scale_percent = ctypes.windll.shcore.GetScaleFactorForDevice(0)
+        if scale_percent:
+            return float(scale_percent) / 100.0
+    except Exception:
+        pass
+    try:
+        import ctypes
+
+        hdc = ctypes.windll.user32.GetDC(0)
+        if not hdc:
+            return 1.0
+        try:
+            dpi_x = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)
+            if dpi_x:
+                return float(dpi_x) / 96.0
+        finally:
+            ctypes.windll.user32.ReleaseDC(0, hdc)
+    except Exception:
+        pass
+    return 1.0
+
+
+def build_style(scale: float | None = None) -> str:
+    scale = resolve_ui_scale(scale)
+    values = {
+        "BASE_FONT": scaled(12, scale),
+        "TITLE_FONT": scaled(18, scale),
+        "PANEL_FONT": scaled(13, scale),
+        "CONTROL_HEIGHT": scaled(26, scale),
+        "LINE_EDIT_HEIGHT": scaled(26, scale),
+        "SIDEBAR_TOGGLE": scaled(24, scale),
+        "TOOLBUTTON_PAD_V": scaled(4, scale),
+        "TOOLBUTTON_PAD_H": scaled(8, scale),
+        "INPUT_PAD_V": scaled(6, scale),
+        "INPUT_PAD_H": scaled(8, scale),
+        "BUTTON_PAD_H": scaled(11, scale),
+        "COMBO_PAD_H": scaled(8, scale),
+        "COMBO_DROPDOWN_WIDTH": scaled(22, scale),
+        "LIST_PAD_V": scaled(8, scale),
+        "LIST_PAD_H": scaled(10, scale),
+        "SCROLLBAR_SIZE": scaled(12, scale),
+        "SCROLLBAR_MIN": scaled(26, scale),
+        "MENU_PAD": scaled(6, scale),
+        "MENU_ITEM_PAD_V": scaled(6, scale),
+        "MENU_ITEM_PAD_H": scaled(18, scale),
+        "GROUP_MARGIN_TOP": scaled(9, scale),
+        "GROUP_PADDING_TOP": scaled(10, scale),
+        "SPLITTER_WIDTH": scaled(5, scale),
+        "HEADER_PAD": scaled(6, scale),
+        "STATUS_PAD_V": scaled(3, scale),
+        "STATUS_PAD_H": scaled(8, scale),
+        "WELCOME_PAD": scaled(18, scale),
+    }
+    style = _STYLE_TEMPLATE
+    for key, value in values.items():
+        style = style.replace(f"@{key}@", str(value))
+    return style
+
+
+_STYLE_TEMPLATE = """
 QWidget {
-    font-size: 12px;
+    font-size: @BASE_FONT@px;
     color: #ece7df;
     background: transparent;
 }
@@ -41,13 +163,13 @@ QFrame#CenterWorkspace {
 }
 
 QLabel#AppTitle {
-    font-size: 18px;
+    font-size: @TITLE_FONT@px;
     font-weight: 700;
     color: #f4efe7;
 }
 
 QLabel#PanelTitle {
-    font-size: 13px;
+    font-size: @PANEL_FONT@px;
     font-weight: 700;
     color: #f1ece3;
 }
@@ -58,7 +180,7 @@ QLabel#HintText {
 
 QLabel#StatusPill {
     color: #f3eadf;
-    padding: 3px 8px;
+    padding: @STATUS_PAD_V@px @STATUS_PAD_H@px;
     border: 1px solid rgba(151, 128, 94, 0.55);
     border-radius: 7px;
     background: rgba(58, 52, 46, 0.95);
@@ -66,7 +188,7 @@ QLabel#StatusPill {
 
 QLabel#WelcomeText {
     color: #d9d0c4;
-    padding: 18px;
+    padding: @WELCOME_PAD@px;
     border: 1px dashed rgba(154, 136, 110, 0.55);
     border-radius: 10px;
     background: rgba(61, 55, 49, 0.5);
@@ -131,7 +253,7 @@ QListWidget#ConversationList {
 }
 
 QListWidget#ConversationList::item {
-    padding: 8px 10px;
+    padding: @LIST_PAD_V@px @LIST_PAD_H@px;
     border-radius: 7px;
     margin-bottom: 3px;
     color: #ded6ca;
@@ -160,17 +282,17 @@ QPlainTextEdit {
 
 QTextEdit,
 QPlainTextEdit {
-    padding: 6px 8px;
+    padding: @INPUT_PAD_V@px @INPUT_PAD_H@px;
 }
 
 QLineEdit {
-    min-height: 26px;
-    padding: 0 8px;
+    min-height: @LINE_EDIT_HEIGHT@px;
+    padding: 0 @INPUT_PAD_H@px;
 }
 
 QPushButton {
-    min-height: 26px;
-    padding: 0 11px;
+    min-height: @CONTROL_HEIGHT@px;
+    padding: 0 @BUTTON_PAD_H@px;
     border: 1px solid rgba(137, 119, 88, 0.56);
     border-radius: 7px;
     background: qlineargradient(
@@ -200,10 +322,10 @@ QPushButton:disabled {
 }
 
 QPushButton#SidebarToggle {
-    min-width: 24px;
-    max-width: 24px;
-    min-height: 24px;
-    max-height: 24px;
+    min-width: @SIDEBAR_TOGGLE@px;
+    max-width: @SIDEBAR_TOGGLE@px;
+    min-height: @SIDEBAR_TOGGLE@px;
+    max-height: @SIDEBAR_TOGGLE@px;
     padding: 0;
     border-radius: 12px;
     background: rgba(72, 66, 58, 0.95);
@@ -216,7 +338,7 @@ QPushButton#SidebarToggle:hover {
 QToolButton {
     border: 1px solid rgba(124, 109, 86, 0.38);
     border-radius: 7px;
-    padding: 4px 8px;
+    padding: @TOOLBUTTON_PAD_V@px @TOOLBUTTON_PAD_H@px;
     background: rgba(58, 53, 48, 0.75);
     color: #e4dbcf;
 }
@@ -226,12 +348,12 @@ QToolButton:hover {
 }
 
 QComboBox {
-    min-height: 26px;
-    padding: 0 8px;
+    min-height: @CONTROL_HEIGHT@px;
+    padding: 0 @COMBO_PAD_H@px;
 }
 
 QComboBox::drop-down {
-    width: 22px;
+    width: @COMBO_DROPDOWN_WIDTH@px;
     border: none;
     background: transparent;
 }
@@ -250,19 +372,19 @@ QScrollBar:horizontal {
 }
 
 QScrollBar:vertical {
-    width: 12px;
+    width: @SCROLLBAR_SIZE@px;
 }
 
 QScrollBar:horizontal {
-    height: 12px;
+    height: @SCROLLBAR_SIZE@px;
 }
 
 QScrollBar::handle:vertical,
 QScrollBar::handle:horizontal {
     background: rgba(116, 102, 81, 0.8);
     border-radius: 6px;
-    min-height: 26px;
-    min-width: 26px;
+    min-height: @SCROLLBAR_MIN@px;
+    min-width: @SCROLLBAR_MIN@px;
 }
 
 QScrollBar::handle:hover {
@@ -280,11 +402,11 @@ QScrollBar::sub-page {
 QMenu {
     border: 1px solid rgba(124, 109, 86, 0.46);
     background: rgba(45, 41, 37, 0.98);
-    padding: 6px;
+    padding: @MENU_PAD@px;
 }
 
 QMenu::item {
-    padding: 6px 18px;
+    padding: @MENU_ITEM_PAD_V@px @MENU_ITEM_PAD_H@px;
     border-radius: 6px;
 }
 
@@ -293,8 +415,8 @@ QMenu::item:selected {
 }
 
 QGroupBox {
-    margin-top: 9px;
-    padding-top: 10px;
+    margin-top: @GROUP_MARGIN_TOP@px;
+    padding-top: @GROUP_PADDING_TOP@px;
     border: 1px solid rgba(112, 98, 80, 0.45);
     border-radius: 9px;
 }
@@ -304,7 +426,7 @@ QSplitter::handle {
 }
 
 QSplitter::handle:horizontal {
-    width: 5px;
+    width: @SPLITTER_WIDTH@px;
 }
 
 QTableWidget {
@@ -316,8 +438,11 @@ QTableWidget {
 
 QHeaderView::section {
     border: none;
-    padding: 6px;
+    padding: @HEADER_PAD@px;
     background: rgba(60, 54, 48, 0.98);
     color: #eee7dc;
 }
 """
+
+
+STYLE = build_style()

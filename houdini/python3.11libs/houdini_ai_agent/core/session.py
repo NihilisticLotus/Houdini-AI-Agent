@@ -17,14 +17,19 @@ import uuid
 
 from houdini_ai_agent.core.codex_cli import CodexCallError, send_codex_chat
 from houdini_ai_agent.core.config import (
+    LastSelectionConfig,
     ProviderConfig,
     VisionBackendConfig,
+    load_last_selection,
     load_providers,
     load_ui_language,
     load_vision_backend,
+    load_work_mode,
     provider_model_allows_vision,
     provider_is_codex_local,
+    save_last_selection,
     save_ui_language,
+    save_work_mode,
 )
 from houdini_ai_agent.core.openai_compat import (
     ProviderCallError,
@@ -32,6 +37,7 @@ from houdini_ai_agent.core.openai_compat import (
     describe_images,
     send_chat,
 )
+from houdini_ai_agent.core.tool_registry import WORK_MODE_AGENT, WORK_MODE_PLAN, WORK_MODES, get_default_tool_registry
 from houdini_ai_agent.qt import QtCore
 
 
@@ -295,6 +301,7 @@ class AgentSession(QtCore.QObject):
     conversations_changed = QtCore.Signal(list)
     conversation_changed = QtCore.Signal(object)
     storage_status_changed = QtCore.Signal(str)
+    work_mode_changed = QtCore.Signal(str)
 
     def __init__(self, adapter, parent=None):
         super().__init__(parent)
@@ -302,14 +309,22 @@ class AgentSession(QtCore.QObject):
         self.providers: List[ProviderConfig] = load_providers()
         self.vision_backend = load_vision_backend()
         self.ui_language = load_ui_language()
+        self.tool_registry = get_default_tool_registry()
+        self.work_mode = self.tool_registry.normalize_mode(load_work_mode())
         self.current_provider_index = 0
         self.current_thinking_level = "中"
+        self._restore_last_selection(load_last_selection())
         self.context: Dict[str, object] = {}
         self._busy = False
         self._active_task_id: Optional[str] = None
         self._active_thread = None
         self._active_worker = None
         self._pending_model_fix_context: Optional[Dict[str, object]] = None
+        self._pending_plans: Dict[str, Dict[str, object]] = {}
+        self._active_plan_execution: Optional[Dict[str, object]] = None
+        self._queued_followup_call: Optional[Dict[str, object]] = None
+        self._tool_repair_attempts = 0
+        self._max_tool_repair_attempts = 2
         self._loading = False
         self.storage_status = ""
         self.conversations: List[Conversation] = []
@@ -526,33 +541,185 @@ class AgentSession(QtCore.QObject):
         return sessions_dir
 
     def set_provider_index(self, index: int) -> None:
-        self.current_provider_index = index
+        if not self.providers:
+            return
+        self.current_provider_index = max(0, min(index, len(self.providers) - 1))
+        self._save_last_selection()
 
     def set_current_model(self, model: str) -> None:
         model = model.strip()
         if not model:
             return
         self.current_provider.model = model
+        self._save_last_selection()
         self.providers_changed.emit(self.providers)
 
     def set_thinking_level(self, level: str) -> None:
         if level in THINKING_LEVELS:
             self.current_thinking_level = level
+            self._save_last_selection()
 
     def set_providers(self, providers: List[ProviderConfig]) -> None:
         self.providers = providers
         self.current_provider_index = min(self.current_provider_index, max(0, len(providers) - 1))
+        self._restore_last_selection(load_last_selection())
         self.providers_changed.emit(self.providers)
 
     def set_runtime_settings(self, providers: List[ProviderConfig], vision_backend: VisionBackendConfig) -> None:
         self.providers = providers
         self.vision_backend = vision_backend
         self.current_provider_index = min(self.current_provider_index, max(0, len(providers) - 1))
+        self._restore_last_selection(load_last_selection())
+        self._save_last_selection()
         self.providers_changed.emit(self.providers)
+
+    def _restore_last_selection(self, selection: LastSelectionConfig) -> None:
+        if not self.providers:
+            return
+        provider_index = self._find_provider_index(selection)
+        if provider_index is not None:
+            self.current_provider_index = provider_index
+            model = selection.model.strip()
+            if model:
+                self.providers[provider_index].model = model
+        if selection.thinking_level in THINKING_LEVELS:
+            self.current_thinking_level = selection.thinking_level
+
+    def _find_provider_index(self, selection: LastSelectionConfig) -> Optional[int]:
+        matches = [
+            (selection.provider_source or "").strip().lower(),
+            (selection.provider_name or "").strip().lower(),
+            (selection.provider_base_url or "").strip().lower(),
+        ]
+        if not any(matches):
+            return None
+        for index, provider in enumerate(self.providers):
+            source = provider.source.strip().lower()
+            name = provider.name.strip().lower()
+            base_url = provider.base_url.strip().lower()
+            if matches[0] and source != matches[0]:
+                continue
+            if matches[1] and name != matches[1]:
+                continue
+            if matches[2] and base_url != matches[2]:
+                continue
+            return index
+        for index, provider in enumerate(self.providers):
+            if matches[1] and provider.name.strip().lower() == matches[1]:
+                return index
+        return None
+
+    def _save_last_selection(self) -> None:
+        if not self.providers:
+            return
+        provider = self.current_provider
+        save_last_selection(
+            LastSelectionConfig(
+                provider_name=provider.name,
+                provider_source=provider.source,
+                provider_base_url=provider.base_url,
+                model=provider.model,
+                thinking_level=self.current_thinking_level,
+            )
+        )
 
     def set_ui_language(self, language: str) -> None:
         self.ui_language = "en" if language == "en" else "zh"
         save_ui_language(self.ui_language)
+
+    def set_work_mode(self, mode: str) -> None:
+        normalized = self.tool_registry.normalize_mode(mode)
+        if normalized == self.work_mode:
+            return
+        self.work_mode = normalized
+        save_work_mode(normalized)
+        self.work_mode_changed.emit(normalized)
+        self._add_event("切换工作模式", self._mode_status_text(), "info")
+        self.save_autosaved_conversations()
+
+    def toolbar_action_allowed(self, action: str) -> bool:
+        return self.tool_registry.is_toolbar_action_allowed(self.work_mode, action)
+
+    def toolbar_action_tooltip(self, action: str) -> str:
+        tool_name = self.tool_registry.toolbar_tool_name(action)
+        if not tool_name:
+            return ""
+        tool = self.tool_registry.get(tool_name)
+        if tool is None:
+            return ""
+        if self.tool_registry.is_tool_allowed(self.work_mode, tool_name):
+            return f"{tool.label}: {tool.description}"
+        return self._blocked_message(tool_name)
+
+    def confirm_plan(self, plan_id: str) -> None:
+        plan = self._pending_plans.get(plan_id)
+        if plan is None:
+            self._add_event("计划确认失败", f"找不到计划：{plan_id}", "warning")
+            self._add_message("assistant", "这个计划已经不存在或会话已刷新。请重新生成计划。")
+            return
+        if plan.get("status") not in {"draft", "confirmed"}:
+            self._add_event("计划已处理", f"计划状态：{plan.get('status')}", "info")
+            return
+        plan["status"] = "executing"
+        self.set_work_mode(WORK_MODE_AGENT)
+        self._add_event("确认计划", f"已确认计划：{plan.get('title') or plan_id}，切换到 Agent 模式执行。", "success")
+        self._add_message("assistant", "已切换到 Agent 模式。我会按计划顺序执行，并在每一步后回报实际结果。")
+        self.save_autosaved_conversations()
+        self._start_plan_execution(plan)
+
+    def cancel_plan(self, plan_id: str) -> None:
+        plan = self._pending_plans.get(plan_id)
+        if plan is None:
+            return
+        plan["status"] = "cancelled"
+        self._add_event("取消计划", f"已取消计划：{plan.get('title') or plan_id}", "warning")
+        self._add_message("assistant", "已取消这个计划，不会切换到 Agent 执行。")
+        self.save_autosaved_conversations()
+
+    def _start_plan_execution(self, plan: Dict[str, object]) -> None:
+        steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
+        if not steps:
+            self._add_event("计划执行停止", "计划没有可执行步骤。", "warning")
+            return
+        self._active_plan_execution = {"plan": plan, "step_index": 0, "completed": []}
+        self._tool_repair_attempts = 0
+        self._set_busy(True)
+        self._run_next_plan_step()
+
+    def _run_next_plan_step(self) -> bool:
+        execution = self._active_plan_execution
+        if not execution:
+            return False
+        plan = execution.get("plan") if isinstance(execution.get("plan"), dict) else {}
+        steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
+        index = int(execution.get("step_index") or 0)
+        if index >= len(steps):
+            plan["status"] = "completed"
+            self._active_plan_execution = None
+            self._add_event("计划执行完成", f"已完成 {len(steps)} 个步骤。", "success")
+            self._add_message("assistant", "计划步骤已按顺序执行完。请在 Houdini 里检查结果；如果视觉效果还需要调整，可以继续让我细化。")
+            self.save_autosaved_conversations()
+            self._set_busy(False)
+            return True
+
+        step = steps[index]
+        if not isinstance(step, dict):
+            step = {"title": str(step), "detail": ""}
+        execution["step_index"] = index + 1
+        title = str(step.get("title") or f"Step {index + 1}")
+        self._add_message("thought", self._format_plan_step_thought(plan, step, index, len(steps)))
+        self._add_event("执行计划步骤", f"{index + 1}/{len(steps)}：{title}", "running")
+        context = self.refresh_context()
+        prompt = self._build_plan_step_prompt(plan, step, index, steps, context)
+        self._start_model_call(
+            prompt=prompt,
+            vision_prompt=title,
+            system_prompt=self._build_system_prompt(context, title),
+            image_paths=[],
+            context=context,
+            show_thought=False,
+        )
+        return True
 
     def refresh_context(self) -> Dict[str, object]:
         self.context = self.adapter.get_context()
@@ -604,6 +771,8 @@ class AgentSession(QtCore.QObject):
         )
 
     def run_action(self, action: str) -> None:
+        if not self._toolbar_action_allowed_or_report(action):
+            return
         self._set_busy(True)
         self._active_task_id = uuid.uuid4().hex
         context = self.refresh_context()
@@ -730,6 +899,36 @@ class AgentSession(QtCore.QObject):
             self._busy = busy
             self.busy_changed.emit(busy)
 
+    def _mode_status_text(self) -> str:
+        meta = WORK_MODES.get(self.work_mode)
+        if meta is None:
+            return f"Current mode: {self.work_mode}"
+        return f"当前模式：{meta.label}。{meta.description}"
+
+    def _blocked_message(self, tool_or_action: str) -> str:
+        tool_label = self.tool_registry.tool_label(tool_or_action)
+        mode_label = self.tool_registry.mode_label(self.work_mode)
+        return f"当前 {mode_label} 模式不允许执行 {tool_label}。请切换到 Agent 模式后再运行会改变 Houdini 场景的工具。"
+
+    def _toolbar_action_allowed_or_report(self, action: str) -> bool:
+        if self.toolbar_action_allowed(action):
+            return True
+        tool_name = self.tool_registry.toolbar_tool_name(action) or action
+        message = self._blocked_message(tool_name)
+        self._add_event("工具被模式拦截", message, "warning")
+        self._add_message("assistant", message)
+        self.save_autosaved_conversations()
+        return False
+
+    def _model_action_allowed_or_report(self, action: str) -> bool:
+        if not self.tool_registry.has_tool(action):
+            return True
+        if self.tool_registry.is_tool_allowed(self.work_mode, action):
+            return True
+        message = self._blocked_message(action)
+        self._add_event("模型工具被模式拦截", message, "warning")
+        return False
+
     def _run_tool_intent_from_text(self, text: str) -> bool:
         normalized = text.lower()
         if any(keyword in normalized for keyword in ("修复", "fix", "repair", "错误", "error", "报错")):
@@ -835,6 +1034,7 @@ class AgentSession(QtCore.QObject):
         system_prompt: str,
         image_paths: List[str],
         context: Dict[str, object],
+        show_thought: bool = True,
     ) -> None:
         task_id = self._active_task_id or uuid.uuid4().hex
         self._active_task_id = task_id
@@ -866,7 +1066,8 @@ class AgentSession(QtCore.QObject):
         self._active_worker = worker
         if vision_resolution.status and image_paths and not provider_can_read_images(self.current_provider):
             self._add_event("Vision backend", vision_resolution.status, "warning")
-        self._add_message("thought", self._format_live_request_plan(context, image_paths, vision_resolution))
+        if show_thought:
+            self._add_message("thought", self._format_live_request_plan(context, image_paths, vision_resolution))
         self._add_event("后台思考", "Model call is running in a background thread; Houdini remains usable.", "running")
         thread.start()
 
@@ -890,15 +1091,24 @@ class AgentSession(QtCore.QObject):
         errors = context.get("errors", []) or []
         _unknown = "\u672a\u77e5"
         _none = "\u65e0"
+        mode_label = self.tool_registry.mode_label(self.work_mode)
+        available_tools = ", ".join(self.tool_registry.action_names_for_mode(self.work_mode)) or "无"
+        if self.work_mode == WORK_MODE_PLAN:
+            mode_reason = "当前是 Plan 模式：先把目标拆成可审核步骤，确认前不修改 Houdini 场景。"
+            next_step = "等待模型返回结构化 plan.steps，然后显示为可确认的计划卡片。"
+        elif self.work_mode == WORK_MODE_AGENT:
+            mode_reason = "当前是 Agent 模式：如果请求明确且工具匹配，可以直接执行受支持的 Houdini 动作。"
+            next_step = "等待模型判断是否调用工具；若执行，会在轨迹中记录实际结果。"
+        else:
+            mode_reason = "当前是 Ask 模式：只做解释和只读检查，不执行会改变场景的动作。"
+            next_step = "等待模型给出回答，必要时只调用只读工具补充上下文。"
         lines = [
-            "已开始",
-            "正在收集 Houdini 上下文",
-            f"已读取当前网络：{context.get('network', '') or _unknown}",
-            f"已读取选中节点：{', '.join(selected[:3]) if selected else _none}",
-            f"已收集错误信息：{len(errors)} 条",
-            f"已接收图片：{len(image_paths)} 张",
-            f"图片处理：{vision_text}",
-            "正在等待模型判断是否需要调用 Houdini 工具",
+            "我正在把请求转成 Houdini 内可验证的下一步。",
+            f"模式判断：{mode_label}。{mode_reason}",
+            f"场景依据：当前网络 {context.get('network', '') or _unknown}；选中节点 {', '.join(selected[:3]) if selected else _none}；错误 {len(errors)} 条。",
+            f"输入依据：图片 {len(image_paths)} 张；{vision_text}。",
+            f"本轮允许的工具：{available_tools}。",
+            f"下一步：{next_step}",
         ]
         return "\n".join(lines)
 
@@ -907,7 +1117,9 @@ class AgentSession(QtCore.QObject):
             return
         self._add_event(event_title, event_detail, status)
         if status == "success":
-            if not self._execute_model_action_response(response):
+            if self.work_mode == WORK_MODE_PLAN and self._handle_plan_response(response):
+                pass
+            elif not self._execute_model_action_response(response):
                 self._add_message("assistant", response)
                 self._apply_pending_model_fix(response)
         else:
@@ -915,6 +1127,21 @@ class AgentSession(QtCore.QObject):
             self._pending_model_fix_context = None
         self.save_autosaved_conversations()
         self._active_task_id = None
+        followup = self._queued_followup_call
+        self._queued_followup_call = None
+        if followup:
+            self._add_event("继续自我修复", "Tool execution failed; asking the model to diagnose and retry with corrected actions.", "running")
+            self._start_model_call(
+                prompt=str(followup.get("prompt") or ""),
+                vision_prompt=str(followup.get("vision_prompt") or ""),
+                system_prompt=str(followup.get("system_prompt") or ""),
+                image_paths=[],
+                context=followup.get("context") if isinstance(followup.get("context"), dict) else self.context,
+                show_thought=False,
+            )
+            return
+        if self._active_plan_execution and self._run_next_plan_step():
+            return
         self._set_busy(False)
 
     def _execute_model_action_response(self, response: str) -> bool:
@@ -928,14 +1155,20 @@ class AgentSession(QtCore.QObject):
             reply = str(payload.get("response", "") or "").strip()
             if reply:
                 self._add_message("assistant", reply)
+                self._handle_plan_step_without_actions(reply)
                 return True
             return False
 
         self._add_message("thought", self._format_model_plan(payload))
         reply_parts: List[str] = []
+        failed_results: List[Dict[str, object]] = []
 
         for action in actions:
             if not isinstance(action, dict):
+                continue
+            action_name = str(action.get("action", "") or "").strip().lower()
+            if not self._model_action_allowed_or_report(action_name):
+                reply_parts.append(self._blocked_message(action_name))
                 continue
             result = self._execute_model_action(action)
             self._add_event(result.get("title", "Model action"), "Selected by model plan.", "info")
@@ -944,10 +1177,293 @@ class AgentSession(QtCore.QObject):
             message = str(result.get("message", "") or "").strip()
             if message:
                 reply_parts.append(message)
+            if self._tool_result_has_error(result):
+                failed_results.append({"action": action, "result": result})
             self.refresh_context()
+
+        if failed_results and self._schedule_tool_repair(actions, failed_results, payload):
+            reply_parts.append("工具执行遇到错误。我会分析失败原因并尝试修正，不会停在这一步。")
+        elif not failed_results:
+            self._tool_repair_attempts = 0
+            self._mark_current_plan_step_completed(reply_parts)
 
         self._add_message("assistant", "\n\n".join(reply_parts) if reply_parts else "Action completed.")
         return True
+
+    def _mark_current_plan_step_completed(self, reply_parts: List[str]) -> None:
+        execution = self._active_plan_execution
+        if not execution:
+            return
+        plan = execution.get("plan") if isinstance(execution.get("plan"), dict) else {}
+        steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
+        completed_index = int(execution.get("step_index") or 0) - 1
+        if completed_index < 0 or completed_index >= len(steps):
+            return
+        step = steps[completed_index]
+        if isinstance(step, dict):
+            step["status"] = "completed"
+            title = str(step.get("title") or f"Step {completed_index + 1}")
+        else:
+            title = str(step)
+        completed = execution.get("completed")
+        if not isinstance(completed, list):
+            completed = []
+            execution["completed"] = completed
+        completed.append(f"{completed_index + 1}. {title}")
+        self._add_event("计划步骤完成", f"{completed_index + 1}/{len(steps)}：{title}", "success")
+        if int(execution.get("step_index") or 0) < len(steps):
+            reply_parts.append("我会继续执行下一步。")
+
+    def _handle_plan_step_without_actions(self, reply: str) -> None:
+        execution = self._active_plan_execution
+        if not execution:
+            return
+        plan = execution.get("plan") if isinstance(execution.get("plan"), dict) else {}
+        steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
+        current_index = int(execution.get("step_index") or 0) - 1
+        title = "当前步骤"
+        if 0 <= current_index < len(steps) and isinstance(steps[current_index], dict):
+            steps[current_index]["status"] = "blocked"
+            title = str(steps[current_index].get("title") or title)
+        self._active_plan_execution = None
+        self._add_event("计划步骤暂停", f"{title} 没有返回可执行动作：{reply[:180]}", "warning")
+
+    def _tool_result_has_error(self, result: Dict[str, object]) -> bool:
+        if any(str(event.get("status", "")).lower() == "error" for event in result.get("events", []) if isinstance(event, dict)):
+            return True
+        message = str(result.get("message", "") or "").lower()
+        return any(marker in message for marker in ("failed", "失败", "error", "exception", "traceback"))
+
+    def _schedule_tool_repair(
+        self,
+        actions: List[object],
+        failed_results: List[Dict[str, object]],
+        payload: Dict[str, object],
+    ) -> bool:
+        if self.current_provider.source == "mock":
+            return False
+        if self._tool_repair_attempts >= self._max_tool_repair_attempts:
+            self._add_event("自我修复已停止", f"已达到 {self._max_tool_repair_attempts} 次重试上限。", "warning")
+            self._tool_repair_attempts = 0
+            return False
+        self._tool_repair_attempts += 1
+        context = self.refresh_context()
+        prompt = self._build_tool_repair_prompt(actions, failed_results, payload, context)
+        self._queued_followup_call = {
+            "prompt": prompt,
+            "vision_prompt": "Analyze the failed Houdini tool call and return a corrected JSON action.",
+            "system_prompt": self._build_system_prompt(context, "repair failed Houdini tool call"),
+            "context": context,
+        }
+        self._add_event("准备自我修复", f"第 {self._tool_repair_attempts}/{self._max_tool_repair_attempts} 次：模型将分析工具错误并返回修正动作。", "warning")
+        return True
+
+    def _build_tool_repair_prompt(
+        self,
+        actions: List[object],
+        failed_results: List[Dict[str, object]],
+        payload: Dict[str, object],
+        context: Dict[str, object],
+    ) -> str:
+        language = self._preferred_response_language(str(payload.get("response", "")))
+        return (
+            "A Houdini tool action just failed during Agent execution. Diagnose the failure and retry with a corrected action.\n"
+            "Return ONLY one fenced JSON object that follows the available action schema. Do not give up after the first failure.\n"
+            "If the failure means the requested operation needs a different node type, parent path, or safer fallback, choose that correction.\n"
+            "If no safe executable correction exists, return an empty actions array and explain the blocker clearly.\n\n"
+            "Important HOM hint: not every Houdini node supports every flag or parameter; object-level nodes and SOP nodes differ. Prefer supported HOM operations.\n\n"
+            "JSON schema:\n"
+            "{\n"
+            '  "response": "short diagnosis and intended correction",\n'
+            f"{self.tool_registry.format_action_schema(self.work_mode)}\n"
+            "}\n\n"
+            "Rules:\n"
+            f"- User-facing response text must be in {language}.\n"
+            "- Prefer one corrected action.\n"
+            "- Do not repeat an action unchanged if the error shows it cannot work.\n"
+            "- Use only actions listed in the schema.\n\n"
+            f"Previous model payload: {json.dumps(payload, ensure_ascii=False)}\n"
+            f"Actions attempted: {json.dumps(actions, ensure_ascii=False)}\n"
+            f"Failed results: {json.dumps(failed_results, ensure_ascii=False)}\n"
+            f"Current scene context after failure: {json.dumps(context, ensure_ascii=False)}\n"
+        )
+
+    def _handle_plan_response(self, response: str) -> bool:
+        payload = self._extract_model_json(response)
+        if payload:
+            plan_data = payload.get("plan") if isinstance(payload.get("plan"), dict) else payload
+            if isinstance(plan_data, dict):
+                plan = self._normalize_plan(plan_data, response)
+            else:
+                plan = self._plan_from_text(response)
+        else:
+            plan = self._plan_from_text(response)
+
+        steps = plan.get("steps", [])
+        if not isinstance(steps, list) or not steps:
+            return False
+
+        self._pending_plans[str(plan["id"])] = plan
+        self._add_message("thought", self._format_plan_reasoning(plan))
+        self._add_message("plan", json.dumps(plan, ensure_ascii=False))
+        self._add_event("生成执行计划", f"等待用户确认：{len(steps)} 个步骤。", "success")
+        return True
+
+    def _normalize_plan(self, data: Dict[str, object], source_text: str) -> Dict[str, object]:
+        steps = data.get("steps", [])
+        normalized_steps = []
+        if isinstance(steps, list):
+            for index, step in enumerate(steps, 1):
+                if isinstance(step, dict):
+                    normalized_steps.append(
+                        {
+                            "id": str(step.get("id") or index),
+                            "title": str(step.get("title") or step.get("name") or f"Step {index}"),
+                            "detail": str(step.get("detail") or step.get("description") or ""),
+                            "tool_hint": str(step.get("tool_hint") or step.get("tool") or ""),
+                            "depends_on": step.get("depends_on", []) if isinstance(step.get("depends_on", []), list) else [],
+                        }
+                    )
+                else:
+                    normalized_steps.append({"id": str(index), "title": str(step), "detail": "", "tool_hint": "", "depends_on": []})
+        if not normalized_steps:
+            normalized_steps = self._extract_steps_from_text(str(data.get("response") or source_text))
+        title = str(data.get("title") or data.get("name") or "待确认执行计划")
+        goal = str(data.get("goal") or data.get("summary") or data.get("response") or "").strip()
+        risks = data.get("risks", [])
+        if isinstance(risks, str):
+            risks = [risks]
+        elif not isinstance(risks, list):
+            risks = []
+        return {
+            "id": uuid.uuid4().hex,
+            "status": "draft",
+            "title": title,
+            "goal": goal,
+            "steps": normalized_steps,
+            "risks": risks,
+            "source_response": source_text,
+        }
+
+    def _plan_from_text(self, text: str) -> Dict[str, object]:
+        steps = self._extract_steps_from_text(text)
+        return {
+            "id": uuid.uuid4().hex,
+            "status": "draft",
+            "title": "待确认执行计划",
+            "goal": self._strip_plan_prefix(text).splitlines()[0][:120] if self._strip_plan_prefix(text).strip() else "",
+            "steps": steps,
+            "risks": [],
+            "source_response": text,
+        }
+
+    def _extract_steps_from_text(self, text: str) -> List[Dict[str, object]]:
+        normalized = self._strip_plan_prefix(text)
+        parts = re.split(r"(?:^|\n)\s*(?:\d+[\.、)]|[-*])\s+", normalized)
+        candidates = [part.strip(" \n;；。") for part in parts if part.strip(" \n;；。")]
+        if len(candidates) <= 1:
+            candidates = [item.strip() for item in re.split(r"[；;]\s*", normalized) if item.strip()]
+        steps = []
+        for index, item in enumerate(candidates[:12], 1):
+            title, detail = self._split_step_title_detail(item)
+            steps.append({"id": str(index), "title": title, "detail": detail, "tool_hint": "", "depends_on": [str(index - 1)] if index > 1 else []})
+        return steps
+
+    def _strip_plan_prefix(self, text: str) -> str:
+        return re.sub(r"^\s*计划\s*[:：]\s*", "", text.strip(), flags=re.IGNORECASE)
+
+    def _split_step_title_detail(self, text: str) -> tuple[str, str]:
+        text = " ".join(text.split())
+        if len(text) <= 42:
+            return text, ""
+        for sep in ("：", ":", "，", ","):
+            if sep in text[:54]:
+                title, detail = text.split(sep, 1)
+                return title.strip(), detail.strip()
+        return text[:42].rstrip() + "...", text
+
+    def _format_plan_reasoning(self, plan: Dict[str, object]) -> str:
+        steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
+        selected = self.context.get("selected_nodes", []) or []
+        errors = self.context.get("errors", []) or []
+        lines = [
+            "我把这轮请求按 Plan 模式处理。",
+            f"目标：{plan.get('goal') or plan.get('title')}",
+            "当前模式只允许观察和规划，不会直接修改 Houdini 场景。",
+            f"上下文依据：网络 {self.context.get('network', '') or '未知'}；选中节点 {', '.join(selected[:3]) if selected else '无'}；错误 {len(errors)} 条。",
+            f"执行顺序：共 {len(steps)} 步，按编号从上到下执行；每步默认依赖上一 步完成。",
+            "下一步：你确认后，我会切换到 Agent 模式，并把这个计划作为执行约束传给模型。",
+        ]
+        return "\n".join(lines)
+
+    def _format_plan_step_thought(self, plan: Dict[str, object], step: Dict[str, object], index: int, total: int) -> str:
+        completed = []
+        execution = self._active_plan_execution
+        if execution and isinstance(execution.get("completed"), list):
+            completed = list(execution.get("completed") or [])
+        lines = [
+            f"执行计划步骤 {index + 1}/{total}。",
+            f"当前步骤：{step.get('title') or f'Step {index + 1}'}",
+        ]
+        detail = str(step.get("detail") or "").strip()
+        if detail:
+            lines.append(f"意图：{detail}")
+        if completed:
+            lines.append(f"已完成：{', '.join(str(item) for item in completed[-3:])}")
+        lines.append("本轮只处理当前步骤；完成后我会自动进入下一步，不需要你再次发送。")
+        return "\n".join(lines)
+
+    def _build_plan_step_prompt(
+        self,
+        plan: Dict[str, object],
+        step: Dict[str, object],
+        index: int,
+        steps: List[object],
+        context: Dict[str, object],
+    ) -> str:
+        language = self._preferred_response_language(str(plan.get("goal") or plan.get("title") or ""))
+        prior_steps = steps[:index]
+        remaining_steps = steps[index + 1 :]
+        return (
+            "You are executing a confirmed Houdini plan one step at a time.\n"
+            "Execute ONLY the current step, then stop. The host application will automatically call you again for the next step.\n"
+            "Return ONLY one fenced JSON object. Use actions when a listed tool can make concrete progress.\n"
+            "If this step needs multiple tightly coupled actions, include them in order. If a tool is not sufficient, explain the blocker in response with an empty actions array.\n\n"
+            "JSON schema:\n"
+            "{\n"
+            '  "response": "short result summary for this step",\n'
+            f"{self.tool_registry.format_action_schema(self.work_mode)}\n"
+            "}\n\n"
+            "Rules:\n"
+            f"- User-facing response text must be in {language}.\n"
+            "- Do not repeat already completed steps unless needed to repair a failure.\n"
+            "- Do not jump ahead to later plan steps; the host will continue the sequence.\n"
+            "- If a Houdini action fails, the host will ask you to diagnose and retry.\n\n"
+            f"Plan title: {plan.get('title', '')}\n"
+            f"Plan goal: {plan.get('goal', '')}\n"
+            f"Current step index: {index + 1} of {len(steps)}\n"
+            f"Current step: {json.dumps(step, ensure_ascii=False)}\n"
+            f"Prior steps: {json.dumps(prior_steps, ensure_ascii=False)}\n"
+            f"Remaining steps: {json.dumps(remaining_steps, ensure_ascii=False)}\n"
+            f"Scene context: {json.dumps(context, ensure_ascii=False)}\n"
+        )
+
+    def _build_plan_execution_request(self, plan: Dict[str, object]) -> str:
+        steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
+        lines = [
+            "执行刚才用户确认的 Houdini 计划。",
+            f"目标：{plan.get('goal') or plan.get('title')}",
+            "请严格按顺序推进；如果某步缺少必要信息，先停下说明，不要随意猜测。",
+            "计划步骤：",
+        ]
+        for index, step in enumerate(steps, 1):
+            if isinstance(step, dict):
+                title = str(step.get("title") or f"Step {index}")
+                detail = str(step.get("detail") or "")
+                lines.append(f"{index}. {title}" + (f" - {detail}" if detail else ""))
+            else:
+                lines.append(f"{index}. {step}")
+        return "\n".join(lines)
 
     def _format_model_plan(self, payload: Dict[str, object]) -> str:
         response = str(payload.get("response", "") or "").strip()
@@ -1044,6 +1560,9 @@ class AgentSession(QtCore.QObject):
         applier = getattr(self.adapter, "apply_code_to_fix_target", None)
         if applier is None:
             self._add_event("模型修复未自动应用", "Current adapter does not support applying code edits.", "warning")
+            return
+        if not self._model_action_allowed_or_report("apply_code"):
+            self._add_message("assistant", self._blocked_message("apply_code"))
             return
         result = applier(fix_context, code)
         self._add_event(result.get("title", "Apply model fix"), "Applied from model response after repair analysis.", "info")
@@ -1146,6 +1665,7 @@ class AgentSession(QtCore.QObject):
             )
         return (
             "You are controlling a Houdini plugin that can execute a small set of real HOM tools.\n"
+            f"Work mode: {self.tool_registry.mode_label(self.work_mode)}. {self.tool_registry.mode_instruction(self.work_mode)}\n"
             "First decide from the user's request and scene context whether a tool should be executed.\n"
             f"{image_instruction}"
             "If a tool should run, return ONLY one fenced JSON object and no prose outside it.\n"
@@ -1153,18 +1673,18 @@ class AgentSession(QtCore.QObject):
             "JSON schema:\n"
             "{\n"
             '  "response": "short user-facing text, or empty string when the tool result is enough",\n'
-            '  "actions": [\n'
-            '    {"action": "create_node", "node_type": "box|grid|sphere|null|attribwrangle|...", "node_name": "", "parent_path": ""},\n'
-            '    {"action": "apply_code", "target_node": "/obj/geo1/attribwrangle1", "code_parm": "snippet", "code": "full replacement code"},\n'
-            '    {"action": "inspect_selection"},\n'
-            '    {"action": "capture_viewport"},\n'
-            '    {"action": "analyze_scene"}\n'
-            "  ]\n"
+            '  "plan": {"title": "only in Plan mode", "goal": "user goal", "steps": [{"id": "1", "title": "short step", "detail": "what will be done", "tool_hint": "likely Houdini action", "depends_on": []}], "risks": ["risk or validation note"]},\n'
+            f"{self.tool_registry.format_action_schema(self.work_mode)}\n"
             "}\n\n"
+            "Available tools in this mode:\n"
+            f"{self.tool_registry.format_tool_summary(self.work_mode)}\n\n"
             "Rules:\n"
             f"- User-facing response text must be in {language} unless the user explicitly asks for another language.\n"
-            "- For creation requests, choose the actual Houdini node type from intent. Examples: box -> box, plane/planar surface -> grid, sphere -> sphere.\n"
-            "- For error repair, inspect the provided error/code context and return apply_code with the full corrected snippet when the target/code parameter is editable.\n"
+            "- Only use actions listed in the schema for the current mode.\n"
+            "- In Agent mode, for creation requests choose the actual Houdini node type from intent. Examples: box -> box, plane/planar surface -> grid, sphere -> sphere.\n"
+            "- In Agent mode, for error repair inspect the provided error/code context and return apply_code with the full corrected snippet when the target/code parameter is editable.\n"
+            "- In Ask or Plan mode, do not return create_node or apply_code. Describe the proposed change instead.\n"
+            "- In Plan mode, always return a structured plan object with ordered steps. The response may be short, but the plan.steps array must carry the execution order.\n"
             "- Do not say the plugin has no executable tools. Use actions when a tool matches.\n"
             "- Do not wrap code in Markdown inside the JSON; put the raw replacement string in the code field.\n"
             "- Prefer one action unless the user explicitly requests multiple operations.\n\n"
@@ -1178,8 +1698,10 @@ class AgentSession(QtCore.QObject):
         return (
             "You are Houdini AI Agent working inside SideFX Houdini.\n"
             "Be concise, practical, and honest about what has and has not been executed.\n"
-            "The host plugin has executable Houdini tools for inspecting the selection, creating preview nodes, "
-            "capturing the viewport, and applying first-pass error fixes. If the execution trace says a tool ran, "
+            f"Current work mode: {self.tool_registry.mode_label(self.work_mode)}. {self.tool_registry.mode_instruction(self.work_mode)}\n"
+            "The host plugin exposes mode-limited Houdini tools. "
+            f"Available now: {', '.join(self.tool_registry.action_names_for_mode(self.work_mode)) or 'none'}. "
+            "If the execution trace says a tool ran, "
             "treat that as already executed. If no tool ran, explain the next executable step instead of claiming "
             "there is no Houdini interface.\n"
             f"Respond in {language} unless the user explicitly asks for another language.\n"

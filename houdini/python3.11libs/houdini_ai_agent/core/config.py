@@ -105,6 +105,15 @@ class VisionBackendConfig:
         return "auto"
 
 
+@dataclass
+class LastSelectionConfig:
+    provider_name: str = ""
+    provider_source: str = ""
+    provider_base_url: str = ""
+    model: str = ""
+    thinking_level: str = "中"
+
+
 def model_name_is_known_text_only(model: str) -> bool:
     normalized = (model or "").strip().lower().replace("_", "-")
     if not normalized:
@@ -225,6 +234,23 @@ def load_vision_backend() -> VisionBackendConfig:
     return VisionBackendConfig()
 
 
+def load_last_selection() -> LastSelectionConfig:
+    raw = load_app_config()
+    item = raw.get("last_selection", {})
+    if isinstance(item, dict):
+        try:
+            return LastSelectionConfig(**item)
+        except TypeError:
+            pass
+    return LastSelectionConfig()
+
+
+def save_last_selection(selection: LastSelectionConfig) -> None:
+    raw = load_app_config()
+    raw["last_selection"] = asdict(selection)
+    save_app_config(raw)
+
+
 def save_runtime_settings(providers: List[ProviderConfig], vision_backend: VisionBackendConfig) -> None:
     custom = [asdict(p) for p in providers if p.source != "mock"]
     raw = load_app_config()
@@ -242,6 +268,19 @@ def load_ui_language() -> str:
 def save_ui_language(language: str) -> None:
     raw = load_app_config()
     raw["ui_language"] = "en" if language == "en" else "zh"
+    save_app_config(raw)
+
+
+def load_work_mode() -> str:
+    raw = load_app_config()
+    mode = str(raw.get("work_mode", "") or "").strip().lower()
+    return mode if mode in {"ask", "agent", "plan"} else "agent"
+
+
+def save_work_mode(mode: str) -> None:
+    normalized = (mode or "agent").strip().lower()
+    raw = load_app_config()
+    raw["work_mode"] = normalized if normalized in {"ask", "agent", "plan"} else "agent"
     save_app_config(raw)
 
 
