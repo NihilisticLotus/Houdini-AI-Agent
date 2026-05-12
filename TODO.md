@@ -7,10 +7,92 @@ mode-based safety, a real tool registry, multi-turn tool execution, structured
 plans, richer Houdini operations, better documentation retrieval, and a stronger
 tool-surface UI.
 
+## Reference Audit 2026-05-12
+
+Source reviewed: `https://github.com/Kazama-Suichiku/Houdini-Agent`.
+
+The reference project is valuable less because every feature should be copied,
+and more because it has clearer product boundaries:
+
+- it treats the agent loop, tool registry, plan manager, plugin hooks, rules,
+  memory, and Houdini tool layer as separate subsystems instead of one large
+  chat/session object
+- it exposes provider-native Function Calling schemas and keeps fenced JSON only
+  as a compatibility fallback
+- it separates `ask`, `agent`, `plan_planning`, and `plan_executing` policies,
+  which is stricter than the current three-mode model
+- it has a much broader Houdini operation surface: node graph queries, node
+  creation, connection, deletion, parameter edits, layout, NetworkBoxes,
+  performance profiling, documentation lookup, shell/Python execution, and
+  reusable skills
+- it has concrete context-size controls: tool-result compression, doc/web
+  caching, and image-payload stripping for older turns
+- it has stronger extension seams through plugin hooks, user rules, tool
+  toggles, and skill registration
+
+The parts to absorb first are the architectural contracts, not the full feature
+count: native tool-call flow, strict mode-state policy, durable plan state,
+uniform tool result objects, local Houdini documentation retrieval, and a
+minimal plugin/rules path after the registry is stable.
+
+## Current Project Gaps Found In This Audit
+
+- Text encoding and localization are not rigorous enough
+  - several UI/test strings currently appear as mojibake in source output
+  - fix encoding before adding more bilingual UI, otherwise tests will freeze
+    corrupted text as expected behavior
+  - add a small encoding smoke test that scans Python, Markdown, and QSS files
+    for replacement characters and common mojibake markers
+- `AgentSession` is carrying too many responsibilities
+  - model calls, action parsing, plan normalization, plan execution, todo state,
+    image routing, session storage, and repair prompting all live in one class
+  - split out `ActionRunner`, `PlanStore`, `ConversationStore`, and
+    `VisionRouter` before the next large feature lands
+- Tool calling is still ad hoc
+  - `openai_compat.py` can read `tool_calls`, but requests do not yet send
+    provider-native `tools` schemas or feed structured tool results back through
+    the provider protocol
+  - current fenced-JSON parsing should become fallback only
+  - every action needs schema validation before execution, not only loose
+    `dict.get()` extraction
+- Plan mode is only half strict
+  - `Plan` currently means both "draft a plan" and "plan exists", while the
+    reference separates planning and executing policy states
+  - confirmed execution should carry a frozen plan snapshot, approved tool list,
+    dependency ordering, and per-step result contract
+  - plan execution should support revise/regenerate and explicit blocked-state
+    recovery, not only sequential auto-continue
+- HOM mutation safety needs a stronger contract
+  - all mutating tools should return `success`, `message`, `created_paths`,
+    `changed_paths`, `warnings`, `errors`, and optional `undo_label`
+  - broad or destructive tools need confirmation gates and before/after
+    summaries
+  - parameter edits need scalar/tuple/expression handling plus "unchanged"
+    detection before creating undo noise
+- Main-thread boundaries are implicit
+  - classify every tool as Houdini-main-thread, background-safe, or external
+    process
+  - dispatch HOM mutations through one main-thread executor and keep doc/web
+    lookups off the UI thread
+- Context management is too shallow for long runs
+  - add round-based trimming that preserves user/assistant intent and compresses
+    old tool outputs
+  - strip or summarize old image payloads before sending future turns
+  - paginate long node-parameter, docs, shell, Python, and profiling results
+- Houdini coverage is narrow compared with the reference
+  - current executable surface is mostly analyze/inspect/capture/create/set/apply
+  - prioritize connect/delete/copy/layout/network summary/check errors before
+    higher-risk shell or Python execution
+- Extensibility should wait for contracts
+  - do not add plugin hooks until tool schemas, mode guards, result objects, and
+    config persistence are stable
+  - when added, plugins should register tools through the same registry and be
+    removable without leaving stale disabled-tool config
+
 ## Completed in This Pass
 
 - Added a first-pass `ToolRegistry`
-  - centralizes the current action schemas for `analyze_scene`, `inspect_selection`, `capture_viewport`, `create_node`, and `apply_code`
+  - centralizes the current action schemas for `analyze_scene`, `inspect_selection`, `capture_viewport`, `create_node`, `set_parm`, and `apply_code`
   - exposes mode-aware tool filtering for prompts, toolbar actions, and model-planned actions
   - maps toolbar aliases such as `create_nodes` and `fix_error` to their underlying tools
 - Added visible `Ask / Agent / Plan` work modes
@@ -39,19 +121,72 @@ tool-surface UI.
   - `Enter` sends; `Alt+Enter` inserts a newline
   - plan messages have a dedicated role and card UI
   - node display/render flags are applied defensively so unsupported flags do not fail the whole creation action
+  - added a first narrow parameter-write path through `set_parm` on explicit node path + parm name targets
+- Hardened plan and task state
+  - active plans are now stored per conversation and restored from autosave/imported session JSON
+  - plan cards refresh as steps move through in-progress, completed, blocked, paused, cancelled, and completed states
+  - added internal `add_todo` / `update_todo` task tools with compact todo chips above the transcript
+  - added core regression tests for mode guards, plan persistence, and todo persistence
+  - added a narrow non-UI Qt fallback so core smoke tests can run outside Houdini when PySide is unavailable
+- Started the priority cleanup from the reference audit
+  - added a UTF-8 / mojibake smoke test for repository text files
+  - verified the visible PowerShell mojibake is an output-display issue rather
+    than wholesale UTF-8 corruption in the files
+  - extracted vision backend selection into `VisionRouter`
+  - added focused tests for direct vision routing, text-only model guards,
+    non-Codex Auto companion routing, and unready provider status messages
+  - extracted model-requested action dispatch into `ActionRunner`
+  - introduced a first-pass normalized `ToolResult` shape with `success`,
+    `events`, `created_paths`, `changed_paths`, `warnings`, and `errors`
+  - added action-runner tests for legacy adapter result normalization, error
+    detection, missing adapter methods, parameter-write validation, and todo dispatch
+  - extracted plan shaping and in-memory state rules into `PlanStore`
+  - added plan-store tests for plan normalization, text step extraction,
+    interrupted-execution recovery, plan-message syncing, and pending-plan
+    rebuilding
+  - improved plan title fallback so description-only steps render with useful
+    labels instead of generic `Step N`
+  - added pre-dispatch action validation so malformed model actions do not call
+    adapter / HOM methods
+  - added `scripts/validate.py` as the one-command local validation entry point:
+    compile plugin code, run smoke import, and run unit-test discovery
+  - documented the local validation command in the README and English guide
 
 ## Next Priority
 
+- Clean up source encoding and localization debt
+  - keep the new encoding smoke test green
+  - normalize line endings and editor settings so UTF-8 text is not misread by
+    Windows shells or contributors' editors
+  - centralize user-facing Chinese / English strings instead of scattering mixed
+    literals through session and adapter code
+- Extract session responsibilities before adding another major workflow
+  - continue shrinking model action parsing now that execution is in
+    `ActionRunner`
+  - continue moving plan execution state transitions into `PlanStore`; plan
+    shaping and storage helpers are already extracted
+  - move conversation file IO and image materialization into a `ConversationStore`
+  - continue shrinking the new `VisionRouter` seam as provider capability probes
+    and MCP / Skill vision modes are implemented
+  - keep `AgentSession` as orchestration and Qt signal glue
 - Harden the new mode and plan workflow
-  - persist active plan state per conversation, not only in runtime memory
   - add revise / regenerate controls before confirmation
-  - show execution progress directly on the plan card as each step completes or blocks
+  - show richer execution progress directly on the plan card, including elapsed timing and tool result summaries
   - add explicit `plan_planning` and `plan_executing` policy states if the current three-mode model becomes too coarse
+  - freeze approved plan data before execution so later model replies cannot
+    silently rewrite the plan
+  - validate `depends_on` and block cycles before execution starts
   - add regression tests proving Ask and Plan cannot mutate the Houdini scene
 - Extend `ToolRegistry` beyond the first-pass wrapper
   - add richer tags such as `readonly`, `network`, `geometry`, `system`, `docs`, `vision`, `task`, and `dangerous`
   - persist per-tool enabled / disabled state in the plugin config
   - expose tool metadata for settings UI, prompt summaries, trace cards, and future plugin tools
+  - build schema validation on top of the new `ActionRunner` / `ToolResult`
+    seam before registering many more HOM tools
+  - promote the current `ActionRunner` field checks into registry-owned schema
+    validation once tool schemas become formal JSON Schema
+  - classify tools by execution boundary: `houdini_main_thread`,
+    `background_safe`, `external_process`
   - add intent-aware tool subsets only after the registry has tests
 - Replace the current one-shot action JSON flow with a bounded multi-turn tool loop
   - support provider-native OpenAI-compatible Function Calling when available
@@ -59,11 +194,19 @@ tool-surface UI.
   - continue after tool results until the task is complete or a tool / iteration limit is reached
   - preserve cancellation, UI responsiveness, and the existing background worker model
   - add duplicate readonly-tool-call suppression to prevent loops
-- Add lightweight todo cards for multi-step runs
-  - `add_todo` / `update_todo` internal tools
-  - statuses: `pending`, `in_progress`, `done`, `error`
-  - render above the chat transcript with compact live status
-  - auto-clear or archive todos per conversation
+  - record every tool call / result pair as a compact trace that can be
+    replayed in tests
+- Build the next Houdini tool slice conservatively
+  - add `connect_nodes`, `delete_node`, `copy_node`, `layout_nodes`,
+    `check_errors`, and `get_network_structure` before shell/Python tools
+  - wrap each mutation in an undo group and return created/changed paths
+  - broaden the current `set_parm` path to handle tuples, expressions, and
+    unchanged-value detection before adding batch parameter edits
+  - add mock-adapter parity tests for every new tool before wiring it into the
+    model prompt
+- Extend lightweight todo cards for multi-step runs
+  - add direct user controls for clearing or archiving todos per conversation
+  - add optional completed-task history expansion
 - Make repair planning multi-step
   - inspect
   - propose

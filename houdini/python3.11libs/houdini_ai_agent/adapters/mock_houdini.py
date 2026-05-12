@@ -94,6 +94,13 @@ class MockHoudiniAdapter:
             "message": "已完成节点创建预演：下一阶段会在真实 Houdini adapter 中创建并连接 `OUT_AGENT_PREVIEW`。",
         }
 
+    def set_node_parameter(self, target_node: str, parm_name: str, value) -> Dict[str, object]:
+        return {
+            "title": "Set parameter",
+            "events": [{"title": "Mock set parameter", "detail": f"{target_node}.{parm_name} = {value}", "status": "success"}],
+            "message": f"Mock mode set `{target_node}.{parm_name}` to `{value}`.",
+        }
+
     def fix_error_preview(self, thinking_level: str) -> Dict[str, object]:
         return {
             "title": "自动修复错误预演",

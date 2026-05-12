@@ -17,6 +17,93 @@ from houdini_ai_agent.ui.style import scaled
 NODE_PATH_PATTERN = re.compile(r"(/(?:obj|mat|stage|img|out|shop|tasks|lopnet|ch|vex|top|topnet|cop2|geo)[^\s`<]*)")
 
 
+class ThoughtBubble(QtWidgets.QFrame):
+    delete_requested = QtCore.Signal(int)
+    node_link_clicked = QtCore.Signal(str)
+
+    def __init__(self, content: str, timestamp: str, message_index: int = -1, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ThoughtBubble")
+        self.message_index = message_index
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(scaled(12), scaled(8), scaled(12), scaled(8))
+        layout.setSpacing(scaled(7))
+
+        header = QtWidgets.QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(scaled(7))
+
+        self.toggle = QtWidgets.QToolButton()
+        self.toggle.setObjectName("ThoughtToggle")
+        self.toggle.setCheckable(True)
+        self.toggle.setChecked(False)
+        self.toggle.setArrowType(QtCore.Qt.RightArrow)
+        self.toggle.setText(f"已思考  {timestamp}")
+        self.toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        header.addWidget(self.toggle)
+        header.addStretch(1)
+        layout.addLayout(header)
+
+        preview_text = self._preview_text(content)
+        if preview_text:
+            preview = QtWidgets.QLabel(preview_text)
+            preview.setObjectName("ThoughtPreview")
+            preview.setWordWrap(True)
+            layout.addWidget(preview)
+
+        self.body = QtWidgets.QLabel()
+        self.body.setWordWrap(True)
+        self.body.setTextFormat(QtCore.Qt.RichText)
+        self.body.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse | QtCore.Qt.LinksAccessibleByMouse)
+        self.body.setOpenExternalLinks(False)
+        self.body.setObjectName("ThoughtBody")
+        self.body.setText(self._format_thought_html(content))
+        self.body.linkActivated.connect(self._link_activated)
+        self.body.hide()
+        layout.addWidget(self.body)
+
+        def _toggle(checked: bool) -> None:
+            self.toggle.setArrowType(QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow)
+            self.body.setVisible(checked)
+
+        self.toggle.toggled.connect(_toggle)
+
+    def contextMenuEvent(self, event):
+        menu = QtWidgets.QMenu(self)
+        delete_action = menu.addAction("删除此消息")
+        action = menu.exec_(event.globalPos())
+        if action == delete_action and self.message_index >= 0:
+            self.delete_requested.emit(self.message_index)
+
+    def _preview_text(self, content: str) -> str:
+        lines = [line.strip(" -•\t") for line in content.splitlines() if line.strip()]
+        cleaned = [line for line in lines if not line.startswith(("可用工具：", "本轮允许的工具："))]
+        return " · ".join(cleaned[:2])[:180]
+
+    def _format_thought_html(self, content: str) -> str:
+        rows = []
+        for raw_line in content.splitlines() or [""]:
+            line = raw_line.strip()
+            if not line:
+                continue
+            line = re.sub(r"^(模式判断|场景依据|输入依据|本轮允许的工具|下一步)[：:]", "", line).strip()
+            label_match = re.match(r"^(模式|已读取当前网络|已检查选择与错误|输入|可用工具|下一步)[：:](.*)$", line)
+            if label_match:
+                escaped = f"<b>{escape(label_match.group(1))}：</b>{escape(label_match.group(2).strip())}"
+            else:
+                escaped = escape(line)
+            linked = NODE_PATH_PATTERN.sub(r'<a href="node:\1">\1</a>', escaped)
+            rows.append(f"<li>{linked}</li>")
+        if not rows:
+            rows.append("<li>已完成本轮判断。</li>")
+        return "<ul class='thought-list'>" + "".join(rows[:8]) + "</ul>"
+
+    def _link_activated(self, href: str) -> None:
+        if href.startswith("node:"):
+            self.node_link_clicked.emit(href[5:])
+
+
 class MessageBubble(QtWidgets.QFrame):
     delete_requested = QtCore.Signal(int)
     node_link_clicked = QtCore.Signal(str)
@@ -29,7 +116,7 @@ class MessageBubble(QtWidgets.QFrame):
         self.setProperty("role", role)
         self.message_index = message_index
 
-        role_label = "You" if role == "user" else ("思考" if role == "thought" else ("Plan" if role == "plan" else "Agent"))
+        role_label = "You" if role == "user" else ("已思考" if role == "thought" else ("Plan" if role == "plan" else "Agent"))
         header = QtWidgets.QLabel(f"{role_label}  {timestamp}")
         header.setObjectName("MessageHeader")
 
@@ -44,7 +131,7 @@ class MessageBubble(QtWidgets.QFrame):
         elif role == "thought":
             body = self._build_body_label(content)
             toggle = QtWidgets.QToolButton()
-            toggle.setText("思考过程")
+            toggle.setText("已思考")
             toggle.setCheckable(True)
             toggle.setChecked(False)
             toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
@@ -95,13 +182,12 @@ class MessageBubble(QtWidgets.QFrame):
 
         goal = str(plan.get("goal") or plan.get("summary") or "").strip()
         if goal:
-            goal_label = self._build_body_label(f"目标：{goal}")
+            goal_label = self._build_body_label(f"计划目标：{goal}")
             layout.addWidget(goal_label)
 
         steps = plan.get("steps", [])
         if isinstance(steps, list) and steps:
-            for index, step in enumerate(steps, 1):
-                layout.addWidget(self._build_plan_step(index, step))
+            layout.addWidget(self._build_plan_steps_widget(steps))
         else:
             fallback = self._build_body_label(str(plan.get("response") or "暂无结构化步骤。"))
             layout.addWidget(fallback)
@@ -124,7 +210,7 @@ class MessageBubble(QtWidgets.QFrame):
         confirm_btn.setFixedWidth(scaled(126))
         cancel_btn = QtWidgets.QPushButton("取消计划")
         cancel_btn.setFixedWidth(scaled(86))
-        enabled = status == "draft"
+        enabled = status in {"draft", "paused", "blocked"}
         confirm_btn.setEnabled(enabled)
         cancel_btn.setEnabled(enabled)
 
@@ -151,6 +237,23 @@ class MessageBubble(QtWidgets.QFrame):
         layout.addLayout(row)
         return widget
 
+    def _build_plan_steps_widget(self, steps: List[object]) -> QtWidgets.QWidget:
+        box = QtWidgets.QFrame()
+        box.setObjectName("PlanTodoBox")
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(scaled(10), scaled(8), scaled(10), scaled(8))
+        layout.setSpacing(scaled(5))
+        done = 0
+        for step in steps:
+            if isinstance(step, dict) and str(step.get("status") or "") == "completed":
+                done += 1
+        header = QtWidgets.QLabel(f"To-dos {done}/{len(steps)} 已完成")
+        header.setObjectName("PanelTitle")
+        layout.addWidget(header)
+        for index, step in enumerate(steps, 1):
+            layout.addWidget(self._build_plan_step(index, step))
+        return box
+
     def _build_plan_step(self, index: int, step: object) -> QtWidgets.QWidget:
         if not isinstance(step, dict):
             step = {"title": str(step)}
@@ -162,13 +265,26 @@ class MessageBubble(QtWidgets.QFrame):
             dep_text = "依赖：" + ", ".join(str(item) for item in depends_on)
         else:
             dep_text = ""
-        lines = [f"{index}. {title}"]
+        status = str(step.get("status") or "pending").strip()
+        marker = "○"
+        if status == "completed":
+            marker = "✓"
+        elif status in {"in_progress", "executing"}:
+            marker = "●"
+        elif status in {"blocked", "error"}:
+            marker = "!"
+        lines = [f"{marker} {title}"]
         if detail:
-            lines.append(f"   {detail}")
+            lines.append(f"  {detail}")
+        if status and status != "pending":
+            lines.append(f"  状态：{status}")
+        result = str(step.get("result") or "").strip()
+        if result:
+            lines.append(f"  结果：{result}")
         if tool:
-            lines.append(f"   工具/动作：{tool}")
+            lines.append(f"  工具/动作：{tool}")
         if dep_text:
-            lines.append(f"   {dep_text}")
+            lines.append(f"  {dep_text}")
         return self._build_body_label("\n".join(lines))
 
     def _parse_plan_content(self, content: str) -> dict:
@@ -186,6 +302,8 @@ class MessageBubble(QtWidgets.QFrame):
             "completed": "已完成。",
             "cancelled": "已取消。",
         }
+        labels["paused"] = "Paused; confirm again to resume."
+        labels["blocked"] = "Blocked; revise or confirm again after adjustment."
         return labels.get(status, status)
 
     def _link_activated(self, href: str) -> None:
@@ -420,23 +538,32 @@ class ChatView(QtWidgets.QWidget):
         if self._showing_welcome:
             self.clear_messages()
         self._remove_bottom_stretch()
-        bubble = MessageBubble(
-            message.role,
-            message.content,
-            message.timestamp,
-            message.image_paths,
-            message_index=self._message_count,
-        )
-        bubble.delete_requested.connect(self.delete_message_requested.emit)
-        bubble.node_link_clicked.connect(self.node_link_clicked.emit)
-        bubble.plan_confirm_requested.connect(self.plan_confirm_requested.emit)
-        bubble.plan_cancel_requested.connect(self.plan_cancel_requested.emit)
+        if message.role == "thought":
+            bubble = ThoughtBubble(message.content, message.timestamp, message_index=self._message_count)
+            bubble.delete_requested.connect(self.delete_message_requested.emit)
+            bubble.node_link_clicked.connect(self.node_link_clicked.emit)
+        else:
+            bubble = MessageBubble(
+                message.role,
+                message.content,
+                message.timestamp,
+                message.image_paths,
+                message_index=self._message_count,
+            )
+            bubble.delete_requested.connect(self.delete_message_requested.emit)
+            bubble.node_link_clicked.connect(self.node_link_clicked.emit)
+            bubble.plan_confirm_requested.connect(self.plan_confirm_requested.emit)
+            bubble.plan_cancel_requested.connect(self.plan_cancel_requested.emit)
         row = QtWidgets.QWidget()
         row_layout = QtWidgets.QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         if message.role == "user":
             row_layout.addStretch(1)
             row_layout.addWidget(bubble, 3)
+        elif message.role == "thought":
+            row_layout.addSpacing(scaled(24))
+            row_layout.addWidget(bubble, 5)
+            row_layout.addStretch(2)
         else:
             row_layout.addWidget(bubble, 1)
         self.messages_layout.addWidget(row)
@@ -446,6 +573,7 @@ class ChatView(QtWidgets.QWidget):
 
     def load_conversation(self, conversation) -> None:
         self.clear_messages()
+        self.set_todos(getattr(conversation, "todos", []) or [])
         if not conversation.messages:
             self.show_welcome()
             return
@@ -460,6 +588,41 @@ class ChatView(QtWidgets.QWidget):
                 widget.deleteLater()
         self._showing_welcome = False
         self._message_count = 0
+
+    def set_todos(self, todos) -> None:
+        if not hasattr(self, "todo_bar"):
+            return
+        while self.todo_layout.count():
+            item = self.todo_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        visible_todos = [todo for todo in (todos or []) if isinstance(todo, dict) and str(todo.get("status") or "") != "done"]
+        if not visible_todos:
+            self.todo_bar.hide()
+            return
+        title = QtWidgets.QLabel("Todos")
+        title.setObjectName("HintText")
+        self.todo_layout.addWidget(title)
+        status_labels = {
+            "pending": "Pending",
+            "in_progress": "Running",
+            "error": "Blocked",
+            "done": "Done",
+        }
+        for todo in visible_todos[:6]:
+            status = str(todo.get("status") or "pending")
+            text = f"{status_labels.get(status, status)}: {todo.get('title') or 'Task'}"
+            label = QtWidgets.QLabel(text)
+            label.setObjectName("TodoChip")
+            label.setToolTip(str(todo.get("detail") or ""))
+            self.todo_layout.addWidget(label)
+        if len(visible_todos) > 6:
+            more = QtWidgets.QLabel(f"+{len(visible_todos) - 6}")
+            more.setObjectName("HintText")
+            self.todo_layout.addWidget(more)
+        self.todo_layout.addStretch(1)
+        self.todo_bar.show()
 
     def set_busy(self, busy: bool) -> None:
         self.send_button.setEnabled(not busy)
@@ -486,6 +649,13 @@ class ChatView(QtWidgets.QWidget):
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+
+        self.todo_bar = QtWidgets.QFrame()
+        self.todo_bar.setObjectName("TodoBar")
+        self.todo_layout = QtWidgets.QHBoxLayout(self.todo_bar)
+        self.todo_layout.setContentsMargins(scaled(10), scaled(5), scaled(10), scaled(5))
+        self.todo_layout.setSpacing(scaled(6))
+        self.todo_bar.hide()
 
         self.messages_widget = QtWidgets.QWidget()
         self.messages_layout = QtWidgets.QVBoxLayout(self.messages_widget)
@@ -538,6 +708,7 @@ class ChatView(QtWidgets.QWidget):
         input_layout.addWidget(self.input, 1)
         input_layout.addLayout(buttons)
 
+        root.addWidget(self.todo_bar)
         root.addWidget(self.scroll, 1)
         root.addWidget(self.attachment_bar)
         root.addWidget(input_row)

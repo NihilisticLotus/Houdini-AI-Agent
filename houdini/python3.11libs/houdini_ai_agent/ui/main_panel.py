@@ -289,6 +289,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.conversation_changed.connect(self._load_conversation)
         self.session.storage_status_changed.connect(self._set_storage_status)
         self.session.work_mode_changed.connect(self._session_work_mode_changed)
+        self.session.todo_changed.connect(self.chat.set_todos)
 
         self.provider_combo.currentIndexChanged.connect(self._provider_changed)
         self.model_combo.currentTextChanged.connect(self._model_changed)

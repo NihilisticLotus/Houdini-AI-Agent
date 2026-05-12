@@ -279,6 +279,35 @@ QFrame#MessageBubble[role="thought"] {
     background: transparent;
 }
 
+QFrame#ThoughtBubble {
+    border: none;
+    border-left: 2px solid #3f6b5f;
+    border-radius: 0;
+    background: transparent;
+}
+
+QToolButton#ThoughtToggle {
+    color: #cfd5df;
+    font-weight: 600;
+    padding: 1px 4px;
+    background: transparent;
+}
+
+QToolButton#ThoughtToggle:hover {
+    background: transparent;
+    color: #f0f5f2;
+}
+
+QLabel#ThoughtPreview {
+    color: #aeb6c2;
+    padding-left: 18px;
+}
+
+QLabel#ThoughtBody {
+    color: #bfc7d2;
+    padding-left: 18px;
+}
+
 QFrame#MessageBubble[role="plan"] {
     border: 1px solid rgba(54, 151, 121, 0.35);
     border-radius: 6px;
@@ -288,6 +317,12 @@ QFrame#MessageBubble[role="plan"] {
 QFrame#PlanCard {
     border: none;
     background: transparent;
+}
+
+QFrame#PlanTodoBox {
+    border: 1px solid #444961;
+    border-radius: 5px;
+    background: rgba(22, 24, 34, 0.72);
 }
 
 QLabel#MessageHeader {
@@ -319,6 +354,21 @@ QFrame#AttachmentBar {
     border-top: 1px solid #2c2f36;
     border-radius: 0;
     background: transparent;
+}
+
+QFrame#TodoBar {
+    border: none;
+    border-bottom: 1px solid #2c2f36;
+    border-radius: 0;
+    background: rgba(25, 27, 31, 0.72);
+}
+
+QLabel#TodoChip {
+    color: #d8e5ff;
+    padding: @STATUS_PAD_V@px @STATUS_PAD_H@px;
+    border: 1px solid rgba(68, 113, 190, 0.42);
+    border-radius: 5px;
+    background: rgba(36, 48, 69, 0.72);
 }
 
 QFrame#PromptDock {

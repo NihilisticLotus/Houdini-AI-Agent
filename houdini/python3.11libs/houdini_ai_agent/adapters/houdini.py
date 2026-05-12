@@ -266,6 +266,45 @@ class HoudiniAdapter(MockHoudiniAdapter):
             "message": f"Created node: `{created_node.path()}`" if created_node is not None else "No node was created.",
         }
 
+    def set_node_parameter(self, target_node: str, parm_name: str, value) -> Dict[str, object]:
+        hou = self.hou
+        target_node = (target_node or "").strip()
+        parm_name = (parm_name or "").strip()
+        if not target_node or not parm_name:
+            return {
+                "title": "Set parameter",
+                "events": [{"title": "Missing parameter target", "detail": f"{target_node}.{parm_name}", "status": "error"}],
+                "message": "Set parameter failed: target node and parameter name are required.",
+            }
+        node = hou.node(target_node)
+        if node is None:
+            return {
+                "title": "Set parameter",
+                "events": [{"title": "Node not found", "detail": target_node, "status": "error"}],
+                "message": f"Set parameter failed: `{target_node}` was not found.",
+            }
+        parm = node.parm(parm_name)
+        if parm is None:
+            return {
+                "title": "Set parameter",
+                "events": [{"title": "Parameter not found", "detail": f"{target_node}.{parm_name}", "status": "error"}],
+                "message": f"Set parameter failed: `{parm_name}` was not found on `{target_node}`.",
+            }
+        try:
+            with hou.undos.group("Houdini AI Agent Set Parameter"):
+                parm.set(value)
+        except Exception as exc:
+            return {
+                "title": "Set parameter",
+                "events": [{"title": "Set parameter failed", "detail": str(exc), "status": "error"}],
+                "message": f"Set parameter failed: {exc}",
+            }
+        return {
+            "title": "Set parameter",
+            "events": [{"title": "Set parameter", "detail": f"{parm.path()} = {value}", "status": "success"}],
+            "message": f"Set `{parm.path()}` to `{value}`.",
+        }
+
     def fix_error_preview(self, thinking_level: str) -> Dict[str, object]:
         hou = self.hou
         selected = hou.selectedNodes()

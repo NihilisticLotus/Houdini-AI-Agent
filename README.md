@@ -1,6 +1,6 @@
 # Houdini AI Agent
 
-**[English](README.md)** | **[中文](README_CN.md)**
+**[English](README.md)** | **[Chinese](README_CN.md)**
 
 Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keeps AI-assisted scene work inside Houdini with multi-session chat, project-aware autosave, image attachments, optional Codex login reuse, OpenAI-compatible providers, separate vision backend routing, and mode-aware model-planned Houdini actions.
 
@@ -29,11 +29,15 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - `Plan` creates a confirmable plan before scene mutation
 - First-pass mode-aware `ToolRegistry` for toolbar and model-planned actions
 - Structured plan cards with confirm / cancel controls and sequential Agent execution
+- Per-conversation plan persistence with live plan-step status refresh
+- Lightweight todo chips for multi-step runs through internal `add_todo` / `update_todo` tools
+- Pre-dispatch validation for model-planned actions before adapter / HOM execution
 - Model-planned Houdini actions:
   - scene analysis
   - selection inspection
   - viewport capture
   - node creation
+  - single-parameter edits on explicit node paths
   - code-parameter repair application
 - Cancellable background requests
 - UI language follow for button-triggered actions
@@ -52,6 +56,9 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - Confirming a plan switches to Agent mode and executes the steps one at a time, with trace messages for each step.
 - Execution reliability and UI polish
   - Failed model-planned tool calls can trigger a bounded self-repair follow-up so the model can diagnose the failed action and retry with corrected JSON.
+  - Plan state is saved with each conversation, so a reload can still find active draft plans instead of losing confirmable cards.
+  - Plan cards now update as execution starts, completes, blocks, pauses, or is cancelled.
+  - Internal todo tools can surface compact progress chips above the chat transcript without changing the Houdini scene.
   - Provider, model, thinking level, and work mode are restored across panel sessions.
   - UI dimensions now scale with Houdini / OS DPI, and can be overridden with `HOUDINI_AI_AGENT_UI_SCALE`.
   - The old left session sidebar was removed; conversations now live in a compact tab strip above the chat transcript.
@@ -105,8 +112,8 @@ We adopted the parts that fit our current architecture cleanly:
 
 Still missing compared with that project:
 
-- persistent Plan state, plan revision controls, and execution DAGs
-- todo task cards for multi-step runs
+- plan revision controls and execution DAGs
+- direct todo archive / clear controls and completed-task history
 - plugin manager / rules editor / memory manager
 - broader HOM tool coverage such as connect, delete, copy, and layout nodes
 
@@ -126,12 +133,26 @@ These are not hard dependencies of the plugin, but they are strong public refere
 
 Right now, the plugin ships an internal **Vision Companion** workflow instead of binding itself to one external MCP implementation. The main chat model and the vision backend are now separate roles, which makes it easier to add MCP or skill-based image understanding later.
 
+## Runtime Architecture
+
+The current runtime is still intentionally compact, but the core seams are now
+separate enough to validate and evolve safely:
+
+- `AgentSession` orchestrates Qt signals, conversations, and request flow
+- `ToolRegistry` owns mode-aware tool availability
+- `VisionRouter` resolves direct image input vs. companion vision fallback
+- `ActionRunner` validates and dispatches model-requested tool actions
+- `PlanStore` owns plan normalization, pending-plan recovery, and message sync
+
 ## Repository Layout
 
 - `packages/houdini_ai_agent.json` - Houdini package entry
 - `houdini/python3.11libs/houdini_ai_agent/` - plugin source package
+  core modules include `action_runner.py`, `plan_store.py`, and `vision_router.py`
 - `houdini/python_panels/houdini_ai_agent.pypanel` - Python Panel registration
 - `houdini/toolbar/houdini_ai_agent.shelf` - shelf tools
+- `scripts/validate.py` - one-command local validation entry point
+- `tests/` - regression coverage for session state, action dispatch, vision routing, and text encoding
 - `docs/README.en.md` - English guide
 - `README_CN.md` - Chinese guide
 - `TODO.md` - roadmap
@@ -141,6 +162,22 @@ Right now, the plugin ships an internal **Vision Companion** workflow instead of
 1. Make sure Houdini can see `packages/houdini_ai_agent.json`.
 2. Restart Houdini.
 3. Open `Windows > New Pane Tab Type > Python Panel > Houdini AI Agent`, or use the `Houdini AI` shelf.
+
+## Local Validation
+
+Run the repository validation suite before handing changes to Houdini:
+
+```powershell
+python scripts/validate.py
+```
+
+On Windows, `py -3 scripts/validate.py` is an equivalent fallback when the
+plain `python` command is not wired to a runnable interpreter.
+
+The script compiles the Python package and scripts, runs `scripts/smoke_import.py`
+with the mock adapter when Houdini is unavailable, and then runs unit-test
+discovery under `tests/`. This is the fastest repository-level gate for
+checking that the plugin is still shippable before opening Houdini.
 
 ## Provider Notes
 
@@ -161,5 +198,5 @@ Right now, the plugin ships an internal **Vision Companion** workflow instead of
 ## Documentation
 
 - [English Guide](docs/README.en.md)
-- [中文说明](README_CN.md)
+- [Chinese Guide](README_CN.md)
 - [TODO](TODO.md)

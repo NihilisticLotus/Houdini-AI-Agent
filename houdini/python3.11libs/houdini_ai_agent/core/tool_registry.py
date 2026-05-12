@@ -150,11 +150,12 @@ class ToolRegistry:
         tools = self.tools_for_mode(mode)
         if not tools:
             return "- No executable tools are available in this mode."
-        return "\n".join(f"- {tool.name}: {tool.description}" for tool in tools)
+        return "\n".join(f"- {tool.name} [{', '.join(tool.tags)}]: {tool.description}" for tool in tools)
 
 
 def get_default_tool_registry() -> ToolRegistry:
     all_modes = frozenset(WORK_MODE_ORDER)
+    task_modes = frozenset(WORK_MODE_ORDER)
     agent_only = frozenset({WORK_MODE_AGENT})
     return ToolRegistry(
         [
@@ -165,7 +166,7 @@ def get_default_tool_registry() -> ToolRegistry:
                 schema={"action": "analyze_scene"},
                 adapter_method="analyze_scene",
                 toolbar_actions=("analyze_scene",),
-                tags=("read", "context"),
+                tags=("readonly", "context"),
                 modes=all_modes,
             ),
             ToolMeta(
@@ -175,7 +176,7 @@ def get_default_tool_registry() -> ToolRegistry:
                 schema={"action": "inspect_selection"},
                 adapter_method="inspect_selection",
                 toolbar_actions=("inspect_selection",),
-                tags=("read", "selection"),
+                tags=("readonly", "selection"),
                 modes=all_modes,
             ),
             ToolMeta(
@@ -185,8 +186,35 @@ def get_default_tool_registry() -> ToolRegistry:
                 schema={"action": "capture_viewport"},
                 adapter_method="capture_viewport_preview",
                 toolbar_actions=("capture_viewport",),
-                tags=("read", "vision"),
+                tags=("readonly", "vision"),
                 modes=all_modes,
+            ),
+            ToolMeta(
+                name="add_todo",
+                label="Add Todo",
+                description="Add a compact internal progress task for multi-step runs. This changes only the chat UI state.",
+                schema={
+                    "action": "add_todo",
+                    "title": "short task title",
+                    "detail": "optional detail",
+                    "status": "pending|in_progress|done|error",
+                },
+                tags=("task", "ui", "readonly_scene"),
+                modes=task_modes,
+            ),
+            ToolMeta(
+                name="update_todo",
+                label="Update Todo",
+                description="Update a compact progress task by id or title. This changes only the chat UI state.",
+                schema={
+                    "action": "update_todo",
+                    "id": "todo id if known",
+                    "title": "existing title fallback",
+                    "status": "pending|in_progress|done|error",
+                    "detail": "optional replacement detail",
+                },
+                tags=("task", "ui", "readonly_scene"),
+                modes=task_modes,
             ),
             ToolMeta(
                 name="create_node",
@@ -200,7 +228,7 @@ def get_default_tool_registry() -> ToolRegistry:
                 },
                 adapter_method="create_node",
                 toolbar_actions=("create_nodes",),
-                tags=("write", "node"),
+                tags=("write", "node", "geometry"),
                 modes=agent_only,
             ),
             ToolMeta(
@@ -215,7 +243,21 @@ def get_default_tool_registry() -> ToolRegistry:
                 },
                 adapter_method="apply_code_to_fix_target",
                 toolbar_actions=("fix_error",),
-                tags=("write", "code"),
+                tags=("write", "code", "dangerous"),
+                modes=agent_only,
+            ),
+            ToolMeta(
+                name="set_parm",
+                label="Set Parameter",
+                description="Set one Houdini parameter on an existing node when the node path and parameter name are explicit.",
+                schema={
+                    "action": "set_parm",
+                    "target_node": "/obj/geo1/box1",
+                    "parm": "ty",
+                    "value": "number|string|[numbers]",
+                },
+                adapter_method="set_node_parameter",
+                tags=("write", "parameter"),
                 modes=agent_only,
             ),
         ]

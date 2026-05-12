@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import uuid
 
+from houdini_ai_agent.core.action_runner import ActionRunner
 from houdini_ai_agent.core.codex_cli import CodexCallError, send_codex_chat
 from houdini_ai_agent.core.config import (
     LastSelectionConfig,
@@ -25,8 +26,6 @@ from houdini_ai_agent.core.config import (
     load_ui_language,
     load_vision_backend,
     load_work_mode,
-    provider_model_allows_vision,
-    provider_is_codex_local,
     save_last_selection,
     save_ui_language,
     save_work_mode,
@@ -37,7 +36,13 @@ from houdini_ai_agent.core.openai_compat import (
     describe_images,
     send_chat,
 )
+from houdini_ai_agent.core.plan_store import PlanStore
 from houdini_ai_agent.core.tool_registry import WORK_MODE_AGENT, WORK_MODE_PLAN, WORK_MODES, get_default_tool_registry
+from houdini_ai_agent.core.vision_router import (
+    VisionBackendResolution,
+    VisionRouter,
+    provider_can_read_images,
+)
 from houdini_ai_agent.qt import QtCore
 
 
@@ -47,10 +52,6 @@ THINKING_LEVELS: Dict[str, Dict[str, str]] = {
     "\u9ad8": {"effort": "high", "description": "\u9002\u5408\u9519\u8bef\u5206\u6790\u548c\u591a\u6b65\u64cd\u4f5c"},
     "\u8d85\u9ad8": {"effort": "xhigh", "description": "\u9002\u5408\u590d\u6742\u8bca\u65ad\u548c\u81ea\u52a8\u4fee\u590d"},
 }
-
-
-def provider_can_read_images(provider: ProviderConfig) -> bool:
-    return provider_model_allows_vision(provider)
 
 
 LEGACY_SESSION_FILE_NAME = "houdini_ai_agent_sessions.json"
@@ -81,14 +82,9 @@ class Conversation:
     title: str
     messages: List[AgentMessage] = field(default_factory=list)
     events: List[ExecutionEvent] = field(default_factory=list)
+    plans: Dict[str, Dict[str, object]] = field(default_factory=dict)
+    todos: List[Dict[str, object]] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%H:%M"))
-
-
-@dataclass
-class VisionBackendResolution:
-    provider: Optional[ProviderConfig]
-    mode: str
-    status: str = ""
 
 
 class ModelCallWorker(QtCore.QObject):
@@ -302,6 +298,7 @@ class AgentSession(QtCore.QObject):
     conversation_changed = QtCore.Signal(object)
     storage_status_changed = QtCore.Signal(str)
     work_mode_changed = QtCore.Signal(str)
+    todo_changed = QtCore.Signal(list)
 
     def __init__(self, adapter, parent=None):
         super().__init__(parent)
@@ -309,6 +306,7 @@ class AgentSession(QtCore.QObject):
         self.providers: List[ProviderConfig] = load_providers()
         self.vision_backend = load_vision_backend()
         self.ui_language = load_ui_language()
+        self.plan_store = PlanStore()
         self.tool_registry = get_default_tool_registry()
         self.work_mode = self.tool_registry.normalize_mode(load_work_mode())
         self.current_provider_index = 0
@@ -322,6 +320,7 @@ class AgentSession(QtCore.QObject):
         self._pending_model_fix_context: Optional[Dict[str, object]] = None
         self._pending_plans: Dict[str, Dict[str, object]] = {}
         self._active_plan_execution: Optional[Dict[str, object]] = None
+        self._last_user_text = ""
         self._queued_followup_call: Optional[Dict[str, object]] = None
         self._tool_repair_attempts = 0
         self._max_tool_repair_attempts = 2
@@ -329,9 +328,13 @@ class AgentSession(QtCore.QObject):
         self.storage_status = ""
         self.conversations: List[Conversation] = []
         self.current_conversation_id = ""
+        self._needs_pending_plan_rebuild = True
 
         if not self.load_autosaved_conversations():
             self.create_conversation("新会话")
+
+        if self._needs_pending_plan_rebuild:
+            self._rebuild_pending_plans()
 
     @property
     def current_provider(self) -> ProviderConfig:
@@ -366,6 +369,7 @@ class AgentSession(QtCore.QObject):
         self.current_conversation_id = conversation.id
         self.conversations_changed.emit(self.conversations)
         self.conversation_changed.emit(conversation)
+        self.todo_changed.emit([])
         self.save_autosaved_conversations()
         return conversation
 
@@ -375,6 +379,7 @@ class AgentSession(QtCore.QObject):
         if any(item.id == conversation_id for item in self.conversations):
             self.current_conversation_id = conversation_id
             self.conversation_changed.emit(self.current_conversation)
+            self.todo_changed.emit(list(self.current_conversation.todos))
             self.save_autosaved_conversations()
 
     def rename_conversation(self, conversation_id: str, title: str) -> None:
@@ -401,7 +406,9 @@ class AgentSession(QtCore.QObject):
         if self.current_conversation_id == conversation_id:
             self.current_conversation_id = self.conversations[0].id
             self.conversation_changed.emit(self.current_conversation)
+            self.todo_changed.emit(list(self.current_conversation.todos))
         self.conversations_changed.emit(self.conversations)
+        self._rebuild_pending_plans()
         self._delete_conversation_files(conversation_id)
         self.save_autosaved_conversations()
         return True
@@ -412,9 +419,13 @@ class AgentSession(QtCore.QObject):
             return False
         conversation.messages = []
         conversation.events = []
+        conversation.plans = {}
+        conversation.todos = []
+        self._rebuild_pending_plans()
         self.conversations_changed.emit(self.conversations)
         if conversation.id == self.current_conversation_id:
             self.conversation_changed.emit(conversation)
+            self.todo_changed.emit([])
         self.save_autosaved_conversations()
         return True
 
@@ -446,8 +457,10 @@ class AgentSession(QtCore.QObject):
             imported += 1
 
         self.current_conversation_id = conversations[0].id if conversations else current_id
+        self._rebuild_pending_plans()
         self.conversations_changed.emit(self.conversations)
         self.conversation_changed.emit(self.current_conversation)
+        self.todo_changed.emit(list(self.current_conversation.todos))
         self.save_autosaved_conversations()
         return imported
 
@@ -502,9 +515,11 @@ class AgentSession(QtCore.QObject):
         self._loading = True
         self.conversations = conversations
         self.current_conversation_id = current_id if current_id else conversations[0].id
+        self._rebuild_pending_plans()
         self._loading = False
         self.conversations_changed.emit(self.conversations)
         self.conversation_changed.emit(self.current_conversation)
+        self.todo_changed.emit(list(self.current_conversation.todos))
         self.storage_status = f"已读取会话记录：{storage_dir}"
         self.storage_status_changed.emit(self.storage_status)
         return True
@@ -651,16 +666,81 @@ class AgentSession(QtCore.QObject):
             return f"{tool.label}: {tool.description}"
         return self._blocked_message(tool_name)
 
+    def _rebuild_pending_plans(self) -> None:
+        self._pending_plans = self.plan_store.rebuild_pending(self.conversations)
+        self._needs_pending_plan_rebuild = False
+
+    def _store_plan(self, plan: Dict[str, object]) -> None:
+        self.plan_store.store(self.current_conversation, self._pending_plans, plan)
+
+    def _sync_plan_message(self, plan: Dict[str, object]) -> None:
+        if self.plan_store.update_plan_message(self.current_conversation.messages, plan):
+            self.conversation_changed.emit(self.current_conversation)
+
+    def _set_plan_step_status(self, plan: Dict[str, object], index: int, status: str, message: str = "") -> None:
+        self.plan_store.set_step_status(plan, index, status, message)
+        self._sync_plan_message(plan)
+
+    def _add_todo(self, title: str, detail: str = "", status: str = "pending") -> Dict[str, object]:
+        allowed = {"pending", "in_progress", "done", "error"}
+        todo = {
+            "id": uuid.uuid4().hex,
+            "title": (title or "Task").strip(),
+            "detail": (detail or "").strip(),
+            "status": status if status in allowed else "pending",
+        }
+        self.current_conversation.todos.append(todo)
+        self.todo_changed.emit(list(self.current_conversation.todos))
+        self.save_autosaved_conversations()
+        return {
+            "title": "Update todo",
+            "events": [{"title": "Add todo", "detail": todo["title"], "status": "success"}],
+            "message": f"Added todo: {todo['title']}",
+        }
+
+    def _update_todo(self, todo_id: str = "", title: str = "", status: str = "", detail: str = "") -> Dict[str, object]:
+        allowed = {"pending", "in_progress", "done", "error"}
+        normalized_id = (todo_id or "").strip()
+        normalized_title = (title or "").strip().lower()
+        target = None
+        for todo in self.current_conversation.todos:
+            if normalized_id and str(todo.get("id") or "") == normalized_id:
+                target = todo
+                break
+            if normalized_title and str(todo.get("title") or "").strip().lower() == normalized_title:
+                target = todo
+                break
+        if target is None:
+            return {
+                "title": "Update todo",
+                "events": [{"title": "Todo not found", "detail": normalized_id or title or "<empty>", "status": "warning"}],
+                "message": "Todo was not found; add it first if this task should be tracked.",
+            }
+        if status:
+            target["status"] = status if status in allowed else str(target.get("status") or "pending")
+        if title:
+            target["title"] = title
+        if detail:
+            target["detail"] = detail
+        self.todo_changed.emit(list(self.current_conversation.todos))
+        self.save_autosaved_conversations()
+        return {
+            "title": "Update todo",
+            "events": [{"title": "Todo updated", "detail": str(target.get("title") or ""), "status": "success"}],
+            "message": f"Updated todo: {target.get('title')}",
+        }
+
     def confirm_plan(self, plan_id: str) -> None:
         plan = self._pending_plans.get(plan_id)
         if plan is None:
             self._add_event("计划确认失败", f"找不到计划：{plan_id}", "warning")
             self._add_message("assistant", "这个计划已经不存在或会话已刷新。请重新生成计划。")
             return
-        if plan.get("status") not in {"draft", "confirmed"}:
+        if plan.get("status") not in {"draft", "confirmed", "paused"}:
             self._add_event("计划已处理", f"计划状态：{plan.get('status')}", "info")
             return
         plan["status"] = "executing"
+        self._sync_plan_message(plan)
         self.set_work_mode(WORK_MODE_AGENT)
         self._add_event("确认计划", f"已确认计划：{plan.get('title') or plan_id}，切换到 Agent 模式执行。", "success")
         self._add_message("assistant", "已切换到 Agent 模式。我会按计划顺序执行，并在每一步后回报实际结果。")
@@ -672,6 +752,7 @@ class AgentSession(QtCore.QObject):
         if plan is None:
             return
         plan["status"] = "cancelled"
+        self._sync_plan_message(plan)
         self._add_event("取消计划", f"已取消计划：{plan.get('title') or plan_id}", "warning")
         self._add_message("assistant", "已取消这个计划，不会切换到 Agent 执行。")
         self.save_autosaved_conversations()
@@ -695,6 +776,7 @@ class AgentSession(QtCore.QObject):
         index = int(execution.get("step_index") or 0)
         if index >= len(steps):
             plan["status"] = "completed"
+            self._sync_plan_message(plan)
             self._active_plan_execution = None
             self._add_event("计划执行完成", f"已完成 {len(steps)} 个步骤。", "success")
             self._add_message("assistant", "计划步骤已按顺序执行完。请在 Houdini 里检查结果；如果视觉效果还需要调整，可以继续让我细化。")
@@ -705,7 +787,9 @@ class AgentSession(QtCore.QObject):
         step = steps[index]
         if not isinstance(step, dict):
             step = {"title": str(step), "detail": ""}
+            steps[index] = step
         execution["step_index"] = index + 1
+        self._set_plan_step_status(plan, index, "in_progress")
         title = str(step.get("title") or f"Step {index + 1}")
         self._add_message("thought", self._format_plan_step_thought(plan, step, index, len(steps)))
         self._add_event("执行计划步骤", f"{index + 1}/{len(steps)}：{title}", "running")
@@ -714,7 +798,7 @@ class AgentSession(QtCore.QObject):
         self._start_model_call(
             prompt=prompt,
             vision_prompt=title,
-            system_prompt=self._build_system_prompt(context, title),
+            system_prompt=self._build_system_prompt(context, str(plan.get("goal") or self._last_user_text or title)),
             image_paths=[],
             context=context,
             show_thought=False,
@@ -735,6 +819,7 @@ class AgentSession(QtCore.QObject):
             text = "请识别并分析这些图片。"
         image_paths = self._resolve_followup_image_paths(text, image_paths)
         image_paths = self._materialize_image_paths(self.current_conversation_id, image_paths)
+        self._last_user_text = text
 
         self._set_busy(True)
         self._active_task_id = uuid.uuid4().hex
@@ -1094,20 +1179,17 @@ class AgentSession(QtCore.QObject):
         mode_label = self.tool_registry.mode_label(self.work_mode)
         available_tools = ", ".join(self.tool_registry.action_names_for_mode(self.work_mode)) or "无"
         if self.work_mode == WORK_MODE_PLAN:
-            mode_reason = "当前是 Plan 模式：先把目标拆成可审核步骤，确认前不修改 Houdini 场景。"
-            next_step = "等待模型返回结构化 plan.steps，然后显示为可确认的计划卡片。"
+            next_step = "生成可确认的结构化计划"
         elif self.work_mode == WORK_MODE_AGENT:
-            mode_reason = "当前是 Agent 模式：如果请求明确且工具匹配，可以直接执行受支持的 Houdini 动作。"
-            next_step = "等待模型判断是否调用工具；若执行，会在轨迹中记录实际结果。"
+            next_step = "判断并执行可用工具动作"
         else:
-            mode_reason = "当前是 Ask 模式：只做解释和只读检查，不执行会改变场景的动作。"
-            next_step = "等待模型给出回答，必要时只调用只读工具补充上下文。"
+            next_step = "回答问题或执行只读检查"
         lines = [
-            "我正在把请求转成 Houdini 内可验证的下一步。",
-            f"模式判断：{mode_label}。{mode_reason}",
-            f"场景依据：当前网络 {context.get('network', '') or _unknown}；选中节点 {', '.join(selected[:3]) if selected else _none}；错误 {len(errors)} 条。",
-            f"输入依据：图片 {len(image_paths)} 张；{vision_text}。",
-            f"本轮允许的工具：{available_tools}。",
+            f"模式：{mode_label}",
+            f"已读取当前网络：{context.get('network', '') or _unknown}",
+            f"已检查选择与错误：选中 {', '.join(selected[:3]) if selected else _none}，错误/警告 {len(errors)} 条",
+            f"输入：图片 {len(image_paths)} 张，{vision_text}",
+            f"可用工具：{available_tools}",
             f"下一步：{next_step}",
         ]
         return "\n".join(lines)
@@ -1120,8 +1202,13 @@ class AgentSession(QtCore.QObject):
             if self.work_mode == WORK_MODE_PLAN and self._handle_plan_response(response):
                 pass
             elif not self._execute_model_action_response(response):
-                self._add_message("assistant", response)
-                self._apply_pending_model_fix(response)
+                if self._active_plan_execution:
+                    blocker = "这一步没有返回可执行的 Houdini 工具动作，所以我已暂停计划，没有继续假装执行。请重新确认或调整这一步。"
+                    self._handle_plan_step_without_actions(blocker)
+                    self._add_message("assistant", blocker)
+                else:
+                    self._add_message("assistant", response)
+                    self._apply_pending_model_fix(response)
         else:
             self._add_message("assistant", response)
             self._pending_model_fix_context = None
@@ -1162,6 +1249,7 @@ class AgentSession(QtCore.QObject):
         self._add_message("thought", self._format_model_plan(payload))
         reply_parts: List[str] = []
         failed_results: List[Dict[str, object]] = []
+        executed_non_task_action = False
 
         for action in actions:
             if not isinstance(action, dict):
@@ -1179,7 +1267,15 @@ class AgentSession(QtCore.QObject):
                 reply_parts.append(message)
             if self._tool_result_has_error(result):
                 failed_results.append({"action": action, "result": result})
+            elif action_name not in {"add_todo", "update_todo"}:
+                executed_non_task_action = True
             self.refresh_context()
+
+        if self._active_plan_execution and not failed_results and not executed_non_task_action:
+            reply = str(payload.get("response", "") or "").strip() or "这一步没有执行任何 Houdini 工具动作。"
+            self._handle_plan_step_without_actions(reply)
+            self._add_message("assistant", reply)
+            return True
 
         if failed_results and self._schedule_tool_repair(actions, failed_results, payload):
             reply_parts.append("工具执行遇到错误。我会分析失败原因并尝试修正，不会停在这一步。")
@@ -1202,6 +1298,8 @@ class AgentSession(QtCore.QObject):
         step = steps[completed_index]
         if isinstance(step, dict):
             step["status"] = "completed"
+            if reply_parts:
+                step["result"] = "\n".join(str(item) for item in reply_parts)[-500:]
             title = str(step.get("title") or f"Step {completed_index + 1}")
         else:
             title = str(step)
@@ -1210,6 +1308,7 @@ class AgentSession(QtCore.QObject):
             completed = []
             execution["completed"] = completed
         completed.append(f"{completed_index + 1}. {title}")
+        self._sync_plan_message(plan)
         self._add_event("计划步骤完成", f"{completed_index + 1}/{len(steps)}：{title}", "success")
         if int(execution.get("step_index") or 0) < len(steps):
             reply_parts.append("我会继续执行下一步。")
@@ -1224,15 +1323,15 @@ class AgentSession(QtCore.QObject):
         title = "当前步骤"
         if 0 <= current_index < len(steps) and isinstance(steps[current_index], dict):
             steps[current_index]["status"] = "blocked"
+            steps[current_index]["result"] = reply[:500]
             title = str(steps[current_index].get("title") or title)
+        plan["status"] = "blocked"
+        self._sync_plan_message(plan)
         self._active_plan_execution = None
         self._add_event("计划步骤暂停", f"{title} 没有返回可执行动作：{reply[:180]}", "warning")
 
     def _tool_result_has_error(self, result: Dict[str, object]) -> bool:
-        if any(str(event.get("status", "")).lower() == "error" for event in result.get("events", []) if isinstance(event, dict)):
-            return True
-        message = str(result.get("message", "") or "").lower()
-        return any(marker in message for marker in ("failed", "失败", "error", "exception", "traceback"))
+        return self._action_runner().has_error(result)
 
     def _schedule_tool_repair(
         self,
@@ -1303,84 +1402,27 @@ class AgentSession(QtCore.QObject):
         if not isinstance(steps, list) or not steps:
             return False
 
-        self._pending_plans[str(plan["id"])] = plan
-        self._add_message("thought", self._format_plan_reasoning(plan))
+        self._store_plan(plan)
         self._add_message("plan", json.dumps(plan, ensure_ascii=False))
         self._add_event("生成执行计划", f"等待用户确认：{len(steps)} 个步骤。", "success")
         return True
 
     def _normalize_plan(self, data: Dict[str, object], source_text: str) -> Dict[str, object]:
-        steps = data.get("steps", [])
-        normalized_steps = []
-        if isinstance(steps, list):
-            for index, step in enumerate(steps, 1):
-                if isinstance(step, dict):
-                    normalized_steps.append(
-                        {
-                            "id": str(step.get("id") or index),
-                            "title": str(step.get("title") or step.get("name") or f"Step {index}"),
-                            "detail": str(step.get("detail") or step.get("description") or ""),
-                            "tool_hint": str(step.get("tool_hint") or step.get("tool") or ""),
-                            "depends_on": step.get("depends_on", []) if isinstance(step.get("depends_on", []), list) else [],
-                        }
-                    )
-                else:
-                    normalized_steps.append({"id": str(index), "title": str(step), "detail": "", "tool_hint": "", "depends_on": []})
-        if not normalized_steps:
-            normalized_steps = self._extract_steps_from_text(str(data.get("response") or source_text))
-        title = str(data.get("title") or data.get("name") or "待确认执行计划")
         goal = str(data.get("goal") or data.get("summary") or data.get("response") or "").strip()
-        risks = data.get("risks", [])
-        if isinstance(risks, str):
-            risks = [risks]
-        elif not isinstance(risks, list):
-            risks = []
-        return {
-            "id": uuid.uuid4().hex,
-            "status": "draft",
-            "title": title,
-            "goal": goal,
-            "steps": normalized_steps,
-            "risks": risks,
-            "source_response": source_text,
-        }
+        language = self._preferred_response_language(self._last_user_text or goal or source_text)
+        return self.plan_store.normalize_plan(data, source_text, language)
 
     def _plan_from_text(self, text: str) -> Dict[str, object]:
-        steps = self._extract_steps_from_text(text)
-        return {
-            "id": uuid.uuid4().hex,
-            "status": "draft",
-            "title": "待确认执行计划",
-            "goal": self._strip_plan_prefix(text).splitlines()[0][:120] if self._strip_plan_prefix(text).strip() else "",
-            "steps": steps,
-            "risks": [],
-            "source_response": text,
-        }
+        return self.plan_store.plan_from_text(text, self._preferred_response_language(self._last_user_text or text))
 
     def _extract_steps_from_text(self, text: str) -> List[Dict[str, object]]:
-        normalized = self._strip_plan_prefix(text)
-        parts = re.split(r"(?:^|\n)\s*(?:\d+[\.、)]|[-*])\s+", normalized)
-        candidates = [part.strip(" \n;；。") for part in parts if part.strip(" \n;；。")]
-        if len(candidates) <= 1:
-            candidates = [item.strip() for item in re.split(r"[；;]\s*", normalized) if item.strip()]
-        steps = []
-        for index, item in enumerate(candidates[:12], 1):
-            title, detail = self._split_step_title_detail(item)
-            steps.append({"id": str(index), "title": title, "detail": detail, "tool_hint": "", "depends_on": [str(index - 1)] if index > 1 else []})
-        return steps
+        return self.plan_store.extract_steps_from_text(text)
 
     def _strip_plan_prefix(self, text: str) -> str:
-        return re.sub(r"^\s*计划\s*[:：]\s*", "", text.strip(), flags=re.IGNORECASE)
+        return self.plan_store.strip_plan_prefix(text)
 
     def _split_step_title_detail(self, text: str) -> tuple[str, str]:
-        text = " ".join(text.split())
-        if len(text) <= 42:
-            return text, ""
-        for sep in ("：", ":", "，", ","):
-            if sep in text[:54]:
-                title, detail = text.split(sep, 1)
-                return title.strip(), detail.strip()
-        return text[:42].rstrip() + "...", text
+        return self.plan_store.split_step_title_detail(text)
 
     def _format_plan_reasoning(self, plan: Dict[str, object]) -> str:
         steps = plan.get("steps", []) if isinstance(plan.get("steps"), list) else []
@@ -1421,13 +1463,13 @@ class AgentSession(QtCore.QObject):
         steps: List[object],
         context: Dict[str, object],
     ) -> str:
-        language = self._preferred_response_language(str(plan.get("goal") or plan.get("title") or ""))
+        language = str(plan.get("language") or "").strip() or self._preferred_response_language(str(plan.get("goal") or plan.get("title") or self._last_user_text or ""))
         prior_steps = steps[:index]
         remaining_steps = steps[index + 1 :]
         return (
             "You are executing a confirmed Houdini plan one step at a time.\n"
             "Execute ONLY the current step, then stop. The host application will automatically call you again for the next step.\n"
-            "Return ONLY one fenced JSON object. Use actions when a listed tool can make concrete progress.\n"
+            "Return ONLY one fenced JSON object. No prose outside the JSON. Use actions when a listed tool can make concrete progress.\n"
             "If this step needs multiple tightly coupled actions, include them in order. If a tool is not sufficient, explain the blocker in response with an empty actions array.\n\n"
             "JSON schema:\n"
             "{\n"
@@ -1436,6 +1478,7 @@ class AgentSession(QtCore.QObject):
             "}\n\n"
             "Rules:\n"
             f"- User-facing response text must be in {language}.\n"
+            "- Never write analysis paragraphs instead of actions. If you cannot execute, return an empty actions array and a short blocker.\n"
             "- Do not repeat already completed steps unless needed to repair a failure.\n"
             "- Do not jump ahead to later plan steps; the host will continue the sequence.\n"
             "- If a Houdini action fails, the host will ask you to diagnose and retry.\n\n"
@@ -1484,53 +1527,18 @@ class AgentSession(QtCore.QObject):
         return "\n".join(lines)
 
     def _summarize_model_action(self, action: Dict[str, object]) -> str:
-        name = str(action.get("action", "") or "").strip().lower()
-        _node = "\u8282\u70b9"
-        _cur_net = "\u5f53\u524d\u7f51\u7edc"
-        _tgt_node = "\u76ee\u6807\u8282\u70b9"
-        if name == "create_node":
-            return f"\u521b\u5efa {action.get('node_type', _node)}\uff0c\u4f4d\u7f6e\uff1a{action.get('parent_path', '') or _cur_net}"
-        if name == "apply_code":
-            return f"\u628a\u4ee3\u7801\u5199\u5165 {action.get('target_node', '') or _tgt_node} / {action.get('code_parm', 'snippet')}"
-        if name == "inspect_selection":
-            return "\u68c0\u67e5\u5f53\u524d\u9009\u4e2d\u8282\u70b9"
-        if name == "capture_viewport":
-            return "\u6355\u83b7\u5f53\u524d\u89c6\u53e3"
-        if name == "analyze_scene":
-            return "\u5206\u6790\u5f53\u524d\u573a\u666f\u4e0a\u4e0b\u6587"
-        return "\u6267\u884c\u6a21\u578b\u8bf7\u6c42\u7684\u5de5\u5177\u52a8\u4f5c"
+        return self._action_runner().summarize(action)
 
     def _execute_model_action(self, action: Dict[str, object]) -> Dict[str, object]:
-        name = str(action.get("action", "") or "").strip().lower()
-        if name == "create_node":
-            creator = getattr(self.adapter, "create_node", None)
-            if creator is None:
-                return {"title": "Create node", "events": [], "message": "Current adapter cannot create nodes."}
-            return creator(
-                str(action.get("node_type", "") or "null"),
-                str(action.get("node_name", "") or ""),
-                str(action.get("parent_path", "") or ""),
-            )
-        if name == "apply_code":
-            applier = getattr(self.adapter, "apply_code_to_fix_target", None)
-            if applier is None:
-                return {"title": "Apply code", "events": [], "message": "Current adapter cannot apply code edits."}
-            fix_context = {
-                "target_node": str(action.get("target_node", "") or ""),
-                "code_parm": str(action.get("code_parm", "") or "snippet"),
-            }
-            return applier(fix_context, str(action.get("code", "") or ""))
-        if name == "inspect_selection":
-            return self.adapter.inspect_selection(self.current_thinking_level)
-        if name == "capture_viewport":
-            return self.adapter.capture_viewport_preview(self.current_thinking_level)
-        if name == "analyze_scene":
-            return self.adapter.analyze_scene(self.current_thinking_level)
-        return {
-            "title": "Unknown model action",
-            "events": [{"title": "Unsupported action", "detail": name or "<empty>", "status": "warning"}],
-            "message": f"The model requested an unsupported action: `{name}`.",
-        }
+        return self._action_runner().execute(action)
+
+    def _action_runner(self) -> ActionRunner:
+        return ActionRunner(
+            self.adapter,
+            thinking_level=lambda: self.current_thinking_level,
+            add_todo=self._add_todo,
+            update_todo=self._update_todo,
+        )
 
     def _extract_model_json(self, text: str) -> Dict[str, object]:
         candidates = []
@@ -1539,14 +1547,48 @@ class AgentSession(QtCore.QObject):
         stripped = text.strip()
         if stripped.startswith("{") and stripped.endswith("}"):
             candidates.append(stripped)
+        candidates.extend(self._extract_balanced_json_candidates(stripped))
         for candidate in candidates:
             try:
                 payload = json.loads(candidate)
             except Exception:
                 continue
             if isinstance(payload, dict):
+                nested_response = payload.get("response")
+                if isinstance(nested_response, str) and ("```" in nested_response or "{" in nested_response):
+                    nested = self._extract_model_json(nested_response)
+                    if nested:
+                        return nested
                 return payload
         return {}
+
+    def _extract_balanced_json_candidates(self, text: str) -> List[str]:
+        candidates: List[str] = []
+        starts = [index for index, char in enumerate(text) if char == "{"]
+        for start in starts[:8]:
+            depth = 0
+            in_string = False
+            escaped = False
+            for index in range(start, len(text)):
+                char = text[index]
+                if in_string:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        in_string = False
+                    continue
+                if char == '"':
+                    in_string = True
+                elif char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidates.append(text[start : index + 1])
+                        break
+        return candidates
 
     def _apply_pending_model_fix(self, response: str) -> None:
         fix_context = self._pending_model_fix_context
@@ -1681,10 +1723,12 @@ class AgentSession(QtCore.QObject):
             "Rules:\n"
             f"- User-facing response text must be in {language} unless the user explicitly asks for another language.\n"
             "- Only use actions listed in the schema for the current mode.\n"
+            "- For multi-step work, use add_todo/update_todo to expose compact progress; these internal task tools do not modify the Houdini scene.\n"
             "- In Agent mode, for creation requests choose the actual Houdini node type from intent. Examples: box -> box, plane/planar surface -> grid, sphere -> sphere.\n"
             "- In Agent mode, for error repair inspect the provided error/code context and return apply_code with the full corrected snippet when the target/code parameter is editable.\n"
             "- In Ask or Plan mode, do not return create_node or apply_code. Describe the proposed change instead.\n"
-            "- In Plan mode, always return a structured plan object with ordered steps. The response may be short, but the plan.steps array must carry the execution order.\n"
+            "- In Plan mode, always return a structured plan object with ordered steps. Keep response empty or one short sentence; never put JSON text inside response.\n"
+            "- Plan steps must be concise user-facing tasks, not raw JSON, not code, and not long paragraphs.\n"
             "- Do not say the plugin has no executable tools. Use actions when a tool matches.\n"
             "- Do not wrap code in Markdown inside the JSON; put the raw replacement string in the code field.\n"
             "- Prefer one action unless the user explicitly requests multiple operations.\n\n"
@@ -1716,75 +1760,7 @@ class AgentSession(QtCore.QObject):
         )
 
     def _resolve_vision_backend(self, primary: ProviderConfig) -> VisionBackendResolution:
-        if provider_can_read_images(primary):
-            return VisionBackendResolution(primary, "direct")
-        return self._find_vision_fallback_provider(primary)
-
-    def _find_vision_fallback_provider(self, primary: ProviderConfig) -> VisionBackendResolution:
-        mode = self.vision_backend.normalized_mode()
-        if mode == "disabled":
-            return VisionBackendResolution(None, mode)
-        if mode == "codex":
-            provider = self._provider_by_source("codex")
-            if provider is None:
-                return VisionBackendResolution(None, mode, "Codex Local is selected as the vision backend, but it is not configured on this machine.")
-            if provider.name == primary.name:
-                return VisionBackendResolution(provider, mode)
-            if not self._provider_ready_for_vision(provider):
-                return VisionBackendResolution(None, mode, "Codex Local is selected as the vision backend, but it is not ready to read images.")
-            return VisionBackendResolution(provider, mode)
-        if mode == "provider":
-            target = self.vision_backend.target.strip()
-            provider = self._provider_by_name(target) if target else None
-            if provider is None:
-                return VisionBackendResolution(None, mode, "A specific vision provider is selected, but no provider name is configured.")
-            if not self._provider_ready_for_vision(provider):
-                return VisionBackendResolution(None, mode, f"{provider.name} is selected as the vision backend, but it is not ready to read images.")
-            return VisionBackendResolution(provider, mode)
-        if mode == "mcp":
-            return VisionBackendResolution(None, mode, "An MCP vision backend is configured, but this plugin build does not execute MCP vision backends yet.")
-        if mode == "skill":
-            return VisionBackendResolution(None, mode, "A skill vision backend is configured, but this plugin build does not execute skill vision backends yet.")
-
-        explicit_candidates = []
-        fallback_candidates = []
-        for provider in self.providers:
-            if provider.name == primary.name:
-                continue
-            if provider_is_codex_local(provider):
-                continue
-            if not self._provider_ready_for_vision(provider):
-                continue
-            if provider.use_as_vision_fallback:
-                explicit_candidates.append(provider)
-            else:
-                fallback_candidates.append(provider)
-        if explicit_candidates:
-            return VisionBackendResolution(explicit_candidates[0], mode)
-        if fallback_candidates:
-            return VisionBackendResolution(fallback_candidates[0], mode)
-        return VisionBackendResolution(None, mode, "自动模式没有找到可用的非 Codex 视觉后端。当前主模型不是 Codex Local，因此不会隐式调用 Codex；请切换到 Codex Local、勾选一个支持视觉的 provider，或在视觉后端里显式选择 Codex Local。")
-
-    def _provider_by_name(self, name: str) -> Optional[ProviderConfig]:
-        for provider in self.providers:
-            if provider.name == name:
-                return provider
-        return None
-
-    def _provider_by_source(self, source: str) -> Optional[ProviderConfig]:
-        for provider in self.providers:
-            if provider.source == source:
-                return provider
-        return None
-
-    def _provider_ready_for_vision(self, provider: ProviderConfig) -> bool:
-        if provider.source == "mock":
-            return False
-        if not provider_can_read_images(provider):
-            return False
-        if provider.source != "codex" and (not provider.base_url.strip() or not provider.model.strip()):
-            return False
-        return provider.has_key
+        return VisionRouter(self.providers, self.vision_backend).resolve(primary)
 
     def _provider_workdir(self, context: Dict[str, object]) -> str:
         hip_file = str(context.get("hip_file", "") or "").strip()
@@ -1852,6 +1828,8 @@ class AgentSession(QtCore.QObject):
                 }
                 for event in conversation.events
             ],
+            "plans": conversation.plans,
+            "todos": conversation.todos,
         }
 
     def _message_to_dict(self, message: AgentMessage, embed_images: bool) -> Dict[str, object]:
@@ -1918,10 +1896,35 @@ class AgentSession(QtCore.QObject):
                     title=str(item.get("title") or "导入会话"),
                     messages=messages,
                     events=events,
+                    plans=self._plans_from_dict(item.get("plans", {})),
+                    todos=self._todos_from_list(item.get("todos", [])),
                     created_at=str(item.get("created_at") or datetime.now().strftime("%H:%M")),
                 )
             )
         return conversations, str(raw.get("current_conversation_id", "")) if isinstance(raw, dict) else ""
+
+    def _plans_from_dict(self, raw: object) -> Dict[str, Dict[str, object]]:
+        return self.plan_store.plans_from_dict(raw)
+
+    def _todos_from_list(self, raw: object) -> List[Dict[str, object]]:
+        if not isinstance(raw, list):
+            return []
+        todos = []
+        allowed = {"pending", "in_progress", "done", "error"}
+        for index, item in enumerate(raw, 1):
+            if not isinstance(item, dict):
+                item = {"title": str(item)}
+            todo_id = str(item.get("id") or uuid.uuid4().hex)
+            status = str(item.get("status") or "pending")
+            todos.append(
+                {
+                    "id": todo_id,
+                    "title": str(item.get("title") or f"Task {index}"),
+                    "detail": str(item.get("detail") or ""),
+                    "status": status if status in allowed else "pending",
+                }
+            )
+        return todos
 
     def _message_from_dict(self, message: Dict[str, object], conversation_id: str) -> AgentMessage:
         image_paths = list(message.get("image_paths", []))
