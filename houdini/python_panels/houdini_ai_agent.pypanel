@@ -6,6 +6,9 @@ from houdini_ai_agent.ui.main_panel import create_panel
 
 
 def onCreateInterface():
+    pane_tab = globals().get("kwargs", {}).get("paneTab")
+    if pane_tab is not None and hasattr(pane_tab, "showToolbar"):
+        pane_tab.showToolbar(False)
     return create_panel()
 ]]></script>
     <includeInToolbarMenu menu_position="0" create_separator="true"/>

@@ -54,6 +54,9 @@ Houdini AI Agent is a Houdini-native PySide panel plugin for Houdini 21. It keep
   - Failed model-planned tool calls can trigger a bounded self-repair follow-up so the model can diagnose the failed action and retry with corrected JSON.
   - Provider, model, thinking level, and work mode are restored across panel sessions.
   - UI dimensions now scale with Houdini / OS DPI, and can be overridden with `HOUDINI_AI_AGENT_UI_SCALE`.
+  - The old left session sidebar was removed; conversations now live in a compact tab strip above the chat transcript.
+  - The right scene-context panel folds from a slim handle on the splitter between the chat workspace and context panel.
+  - The Python Panel host toolbar is hidden on creation through Houdini's `hou.PythonPanel.showToolbar(False)` API to reclaim vertical space.
   - Chat input now sends with `Enter` and inserts a newline with `Alt+Enter`.
   - Houdini display / render flags are set defensively so unsupported node types do not break node creation.
 - Built-in **vision backend routing**

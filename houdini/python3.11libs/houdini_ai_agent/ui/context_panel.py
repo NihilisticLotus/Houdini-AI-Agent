@@ -11,6 +11,8 @@ class ContextPanel(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         self._labels = {}
         self._build_ui()
 
@@ -31,14 +33,14 @@ class ContextPanel(QtWidgets.QWidget):
 
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(scaled(10), scaled(10), scaled(10), scaled(10))
-        root.setSpacing(scaled(10))
+        root.setContentsMargins(scaled(8), scaled(8), scaled(8), scaled(8))
+        root.setSpacing(scaled(8))
 
         title_row = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel("工程上下文")
         title.setObjectName("PanelTitle")
         refresh = QtWidgets.QPushButton("刷新")
-        refresh.setFixedWidth(scaled(64))
+        refresh.setFixedWidth(scaled(58))
         refresh.clicked.connect(self.refresh_requested.emit)
         title_row.addWidget(title)
         title_row.addStretch(1)
@@ -56,6 +58,8 @@ class ContextPanel(QtWidgets.QWidget):
     def _add_section(self, root, title: str, key: str) -> None:
         group = QtWidgets.QGroupBox(title)
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setContentsMargins(scaled(8), scaled(8), scaled(8), scaled(8))
+        layout.setSpacing(scaled(4))
         value = QtWidgets.QLabel("")
         value.setWordWrap(True)
         value.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -71,6 +75,8 @@ class ContextPanel(QtWidgets.QWidget):
 class ExecutionTrace(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         self._build_ui()
 
     def add_event(self, event) -> None:

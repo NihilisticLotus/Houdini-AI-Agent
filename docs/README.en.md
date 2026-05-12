@@ -80,6 +80,9 @@ Local package note: the checked-in package file currently points `HOUDINI_AI_AGE
 
 - High-DPI-aware dimensions and stylesheet values with optional `HOUDINI_AI_AGENT_UI_SCALE` override
 - Mode picker beside provider / model / thinking controls
+- Compact conversation tabs above the chat transcript replace the previous left session sidebar
+- Right scene-context folding is handled by a slim splitter overlay between the chat workspace and context panel, so it remains reachable after collapse
+- Houdini's Python Panel host toolbar is hidden on panel creation with `hou.PythonPanel.showToolbar(False)` when the API is available
 - Plan cards with ordered steps, dependency notes, risks, confirm, and cancel controls
 - Enter sends chat messages; `Alt+Enter` inserts a newline
 - Defensive display / render flag setting during node creation so unsupported node classes do not abort the whole action

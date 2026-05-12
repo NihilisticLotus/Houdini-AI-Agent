@@ -34,11 +34,11 @@ class MessageBubble(QtWidgets.QFrame):
         header.setObjectName("MessageHeader")
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(scaled(12), scaled(8), scaled(12), scaled(10))
-        layout.setSpacing(scaled(8))
+        layout.setContentsMargins(scaled(11), scaled(7), scaled(11), scaled(9))
+        layout.setSpacing(scaled(7))
         layout.addWidget(header)
         if image_paths:
-            layout.addWidget(ImageStrip(image_paths, max_thumb_size=132))
+            layout.addWidget(ImageStrip(image_paths, max_thumb_size=116))
         if role == "plan":
             layout.addWidget(self._build_plan_widget(content))
         elif role == "thought":
@@ -269,7 +269,7 @@ class ImagePreviewDialog(QtWidgets.QDialog):
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(scaled(10), scaled(10), scaled(10), scaled(10))
-        root.setSpacing(scaled(8))
+        root.setSpacing(scaled(6))
 
         pixmap = QtGui.QPixmap(self.path)
         self.image_label = QtWidgets.QLabel()
@@ -403,6 +403,7 @@ class ChatView(QtWidgets.QWidget):
     node_link_clicked = QtCore.Signal(str)
     plan_confirm_requested = QtCore.Signal(str)
     plan_cancel_requested = QtCore.Signal(str)
+    pending_images_changed = QtCore.Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -435,10 +436,9 @@ class ChatView(QtWidgets.QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
         if message.role == "user":
             row_layout.addStretch(1)
-            row_layout.addWidget(bubble, 5)
+            row_layout.addWidget(bubble, 3)
         else:
-            row_layout.addWidget(bubble, 5)
-            row_layout.addStretch(1)
+            row_layout.addWidget(bubble, 1)
         self.messages_layout.addWidget(row)
         self.messages_layout.addStretch(1)
         self._message_count += 1
@@ -481,7 +481,7 @@ class ChatView(QtWidgets.QWidget):
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(scaled(8))
+        root.setSpacing(scaled(6))
 
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -489,8 +489,8 @@ class ChatView(QtWidgets.QWidget):
 
         self.messages_widget = QtWidgets.QWidget()
         self.messages_layout = QtWidgets.QVBoxLayout(self.messages_widget)
-        self.messages_layout.setContentsMargins(scaled(12), scaled(12), scaled(12), scaled(12))
-        self.messages_layout.setSpacing(scaled(10))
+        self.messages_layout.setContentsMargins(scaled(10), scaled(10), scaled(10), scaled(10))
+        self.messages_layout.setSpacing(scaled(8))
         self.scroll.setWidget(self.messages_widget)
 
         self.attachment_bar = QtWidgets.QFrame()
@@ -498,36 +498,39 @@ class ChatView(QtWidgets.QWidget):
         self.attachment_layout = QtWidgets.QHBoxLayout(self.attachment_bar)
         self.attachment_layout.setContentsMargins(scaled(6), scaled(2), scaled(6), scaled(2))
         self.attachment_layout.setSpacing(scaled(6))
-        self.attachment_bar.setMaximumHeight(scaled(46))
+        self.attachment_bar.setMaximumHeight(scaled(40))
         self.attachment_bar.hide()
 
-        input_row = QtWidgets.QWidget()
+        input_row = QtWidgets.QFrame()
+        input_row.setObjectName("PromptDock")
         input_layout = QtWidgets.QHBoxLayout(input_row)
-        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setContentsMargins(scaled(10), scaled(8), scaled(8), scaled(8))
         input_layout.setSpacing(scaled(8))
 
         self.input = ChatInput()
+        self.input.setObjectName("PromptInput")
         self.input.setPlaceholderText("输入请求，Enter 发送，Alt+Enter 换行。也可以先添加图片让 Agent 识别。")
-        self.input.setFixedHeight(scaled(82))
+        self.input.setFixedHeight(scaled(86))
         self.input.submit_requested.connect(self._emit_send)
         self.input.image_pasted.connect(self._add_pending_image)
 
         self.attach_button = QtWidgets.QPushButton("图片")
-        self.attach_button.setFixedWidth(scaled(76))
+        self.attach_button.setFixedWidth(scaled(58))
         self.attach_button.clicked.connect(self._attach_images)
 
         self.send_button = QtWidgets.QPushButton("发送")
-        self.send_button.setFixedWidth(scaled(76))
+        self.send_button.setObjectName("PrimaryButton")
+        self.send_button.setFixedWidth(scaled(58))
         self.send_button.clicked.connect(self._emit_send)
 
         self.stop_button = QtWidgets.QPushButton("停止")
-        self.stop_button.setFixedWidth(scaled(76))
+        self.stop_button.setFixedWidth(scaled(58))
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_requested.emit)
 
         buttons = QtWidgets.QVBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(scaled(6))
+        buttons.setSpacing(scaled(4))
         buttons.addWidget(self.attach_button)
         buttons.addWidget(self.send_button)
         buttons.addWidget(self.stop_button)
@@ -535,14 +538,9 @@ class ChatView(QtWidgets.QWidget):
         input_layout.addWidget(self.input, 1)
         input_layout.addLayout(buttons)
 
-        hint = QtWidgets.QLabel("Enter 发送 / Alt+Enter 换行")
-        hint.setAlignment(alignment_flag("AlignRight"))
-        hint.setObjectName("HintText")
-
         root.addWidget(self.scroll, 1)
         root.addWidget(self.attachment_bar)
         root.addWidget(input_row)
-        root.addWidget(hint)
 
     def _attach_images(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -575,6 +573,7 @@ class ChatView(QtWidgets.QWidget):
 
         if not self.pending_images:
             self.attachment_bar.hide()
+            self.pending_images_changed.emit([])
             return
 
         label = QtWidgets.QLabel(f"待发送图片 {len(self.pending_images)}")
@@ -586,6 +585,7 @@ class ChatView(QtWidgets.QWidget):
         clear_btn.clicked.connect(self._clear_attachments)
         self.attachment_layout.addWidget(clear_btn)
         self.attachment_bar.show()
+        self.pending_images_changed.emit(list(self.pending_images))
 
     def _clear_attachments(self) -> None:
         self.pending_images = []

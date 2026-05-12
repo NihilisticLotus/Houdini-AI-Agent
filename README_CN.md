@@ -68,6 +68,9 @@ Houdini AI Agent 是一个面向 Houdini 21 的原生 PySide 面板插件。它�
   - 创建节点时会更稳妥地设置 display / render flag，不再因为某类节点不支持对应 flag 就中断整个创建流程
 - 界面与交互
   - UI 尺寸和样式会随 DPI 缩放，可通过 `HOUDINI_AI_AGENT_UI_SCALE` 手动覆盖
+  - 移除左侧会话栏，会话选择改为主聊天区上方的紧凑标签栏
+  - 工程上下文面板的折叠按钮移动到聊天区与右侧上下文之间的 splitter 分隔线上，折叠后仍可重新展开
+  - Python Panel 宿主工具栏会在创建面板时通过 `hou.PythonPanel.showToolbar(False)` 隐藏，减少顶部空间占用
   - 输入框改为 `Enter` 发送、`Alt+Enter` 换行
   - 会自动恢复上次使用的 provider、模型、思考级别和工作模式
 - 思考过程展示修复

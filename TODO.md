@@ -29,6 +29,12 @@ tool-surface UI.
 - Added DPI-aware UI scaling
   - core panel, chat, settings, context panel, and stylesheet dimensions now use shared scaling helpers
   - `HOUDINI_AI_AGENT_UI_SCALE` can override automatic detection
+- Compact Houdini panel chrome and conversation navigation
+  - removed the left conversation sidebar in favor of a compact tab strip above the chat transcript
+  - reduced tab height, tab width, and tab font size for smaller Houdini panes
+  - moved the scene-context fold handle onto the splitter boundary between the chat workspace and right context panel
+  - kept the fold handle reachable after the context panel is collapsed
+  - hide Houdini's Python Panel host toolbar through `hou.PythonPanel.showToolbar(False)` when available
 - Improved chat and HOM execution ergonomics
   - `Enter` sends; `Alt+Enter` inserts a newline
   - plan messages have a dedicated role and card UI
@@ -124,6 +130,7 @@ tool-surface UI.
   - add per-message resend / retry
   - add compact token / cost / model usage chips when provider usage data is available
   - add font scaling controls and persist the setting
+  - add a persisted compact-layout preference after the current manual chrome reductions settle
   - add better IME handling for PySide2 / PySide6, especially CJK input on Windows and macOS
   - add `@node` mention autocomplete from the current network
   - add a streaming VEX / Python code preview before applying generated code
@@ -235,7 +242,7 @@ tool-surface UI.
 - Add per-message resend
 - Add session pinning / favorites
 - Add collapsible execution groups for long repair runs
-- Add optional compact mode for smaller Houdini layouts
+- Add optional compact mode presets for smaller Houdini layouts
 - Add mode switcher near the input area
   - Ask / Agent / Plan segmented control
   - mode-specific color / tooltip / safety hint

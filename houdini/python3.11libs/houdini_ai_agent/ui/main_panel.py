@@ -22,11 +22,8 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.setAutoFillBackground(True)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self._syncing_conversations = False
-        self._conversation_filter = ""
-        self._left_sidebar_visible = True
         self._right_sidebar_visible = True
-        self._left_sidebar_width = scaled(210)
-        self._right_sidebar_width = scaled(310)
+        self._right_sidebar_width = scaled(292)
         self._focus_mode = False
         self._trace_visible_before_focus = True
         self._action_buttons = {}
@@ -38,58 +35,60 @@ class AgentMainPanel(QtWidgets.QWidget):
         self._populate_provider_combo()
         self._refresh_conversation_list()
         self.chat.load_conversation(self.session.current_conversation)
+        self._update_context_usage()
         self._set_storage_status(self.session.storage_status)
         self.session.refresh_context()
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_right_toggle()
+
     def _build_ui(self) -> None:
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(scaled(8), scaled(8), scaled(8), scaled(8))
-        root.setSpacing(scaled(8))
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(scaled(1))
 
         root.addWidget(self._build_header())
         root.addWidget(self._build_action_bar())
 
         self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        self.left_sidebar = self._build_session_sidebar()
         self.center_workspace = self._build_center_workspace()
         self.context_panel = ContextPanel()
         self.context_panel.setObjectName("ContextPanel")
-        self.context_panel.setMinimumWidth(scaled(290))
+        self.context_panel.setMinimumWidth(scaled(280))
 
-        self.main_splitter.addWidget(self.left_sidebar)
         self.main_splitter.addWidget(self.center_workspace)
         self.main_splitter.addWidget(self.context_panel)
-        self.main_splitter.setSizes([scaled(210), scaled(780), scaled(310)])
-        self.main_splitter.setStretchFactor(0, 0)
-        self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setStretchFactor(2, 0)
+        self.main_splitter.setSizes([scaled(1016), scaled(292)])
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
-        focus_row = QtWidgets.QHBoxLayout()
-        focus_row.setContentsMargins(0, 0, 0, 0)
-        focus_row.setSpacing(scaled(6))
-        self.left_toggle_btn = QtWidgets.QPushButton("◀")
-        self.left_toggle_btn.setObjectName("SidebarToggle")
-        self.left_toggle_btn.setFixedWidth(scaled(24))
-        self.left_toggle_btn.clicked.connect(self._toggle_left_sidebar)
-        self.right_toggle_btn = QtWidgets.QPushButton("▶")
-        self.right_toggle_btn.setObjectName("SidebarToggle")
-        self.right_toggle_btn.setFixedWidth(scaled(24))
-        self.right_toggle_btn.clicked.connect(self._toggle_right_sidebar)
-        focus_row.addWidget(self.left_toggle_btn)
-        focus_row.addWidget(self.main_splitter, 1)
-        focus_row.addWidget(self.right_toggle_btn)
         focus_widget = QtWidgets.QWidget()
+        self.focus_widget = focus_widget
         focus_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        focus_widget.setLayout(focus_row)
+        focus_layout = QtWidgets.QHBoxLayout(focus_widget)
+        focus_layout.setContentsMargins(0, 0, 0, 0)
+        focus_layout.setSpacing(0)
+        focus_layout.addWidget(self.main_splitter, 1)
+
+        self.right_toggle_btn = QtWidgets.QPushButton(">", focus_widget)
+        self.right_toggle_btn.setObjectName("SidebarToggle")
+        self.right_toggle_btn.setFixedSize(scaled(8), scaled(54))
+        self.right_toggle_btn.clicked.connect(self._toggle_right_sidebar)
+        self.right_toggle_btn.raise_()
+
+        self.main_splitter.splitterMoved.connect(lambda *_args: self._position_right_toggle())
         root.addWidget(focus_widget, 1)
+        QtCore.QTimer.singleShot(0, self._position_right_toggle)
 
     def _build_header(self) -> QtWidgets.QWidget:
         header_widget = QtWidgets.QFrame()
         header_widget.setObjectName("HeaderBar")
         header = QtWidgets.QHBoxLayout(header_widget)
-        header.setContentsMargins(scaled(12), scaled(10), scaled(12), scaled(10))
-        header.setSpacing(scaled(10))
+        header.setContentsMargins(scaled(8), scaled(4), scaled(8), scaled(4))
+        header.setSpacing(scaled(8))
 
         title_col = QtWidgets.QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
@@ -99,6 +98,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         title.setObjectName("AppTitle")
         subtitle = QtWidgets.QLabel("会话式工程助手，支持图片、自动保存和工程上下文读取")
         subtitle.setObjectName("HintText")
+        subtitle.hide()
         self.adapter_label = QtWidgets.QLabel("")
         self.adapter_label.setObjectName("HintText")
 
@@ -111,31 +111,31 @@ class AgentMainPanel(QtWidgets.QWidget):
         status_col.addWidget(self.adapter_label)
 
         settings_btn = QtWidgets.QPushButton("设置")
-        settings_btn.setFixedWidth(scaled(72))
+        settings_btn.setFixedWidth(scaled(68))
         settings_btn.clicked.connect(self._open_settings)
         self.focus_mode_btn = QtWidgets.QPushButton("专注模式")
-        self.focus_mode_btn.setFixedWidth(scaled(84))
+        self.focus_mode_btn.setFixedWidth(scaled(80))
         self.focus_mode_btn.clicked.connect(self._toggle_focus_mode)
 
         header.addLayout(title_col)
         header.addStretch(1)
         header.addLayout(status_col)
         self.language_btn = QtWidgets.QPushButton("")
-        self.language_btn.setFixedWidth(scaled(74))
+        self.language_btn.setFixedWidth(scaled(70))
         self.language_btn.clicked.connect(self._toggle_ui_language)
         header.addWidget(self.language_btn)
         header.addWidget(self.focus_mode_btn)
         header.addWidget(settings_btn)
         header_widget.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        header_widget.setMaximumHeight(scaled(74))
+        header_widget.setMaximumHeight(scaled(42))
         return header_widget
 
     def _build_action_bar(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QFrame()
         bar.setObjectName("ActionBar")
         actions = QtWidgets.QHBoxLayout(bar)
-        actions.setContentsMargins(scaled(6), 0, scaled(6), 0)
-        actions.setSpacing(scaled(8))
+        actions.setContentsMargins(scaled(8), 0, scaled(8), 0)
+        actions.setSpacing(scaled(6))
         self._add_action_button(actions, "分析工程", "analyze_scene")
         self._add_action_button(actions, "查看选中节点", "inspect_selection")
         self._add_action_button(actions, "创建节点", "create_nodes")
@@ -143,101 +143,92 @@ class AgentMainPanel(QtWidgets.QWidget):
         self._add_action_button(actions, "捕获视口", "capture_viewport")
         actions.addStretch(1)
         bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        bar.setMaximumHeight(scaled(42))
+        bar.setMaximumHeight(scaled(32))
         return bar
-
-    def _build_session_sidebar(self) -> QtWidgets.QWidget:
-        sidebar = QtWidgets.QFrame()
-        sidebar.setObjectName("SessionSidebar")
-        sidebar.setMinimumWidth(scaled(210))
-        sidebar.setMaximumWidth(scaled(280))
-        sidebar.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
-        layout = QtWidgets.QVBoxLayout(sidebar)
-        layout.setContentsMargins(scaled(10), scaled(10), scaled(10), scaled(10))
-        layout.setSpacing(scaled(8))
-
-        row = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("会话")
-        title.setObjectName("PanelTitle")
-        new_btn = QtWidgets.QPushButton("新建")
-        new_btn.setFixedWidth(scaled(50))
-        new_btn.clicked.connect(lambda: self.session.create_conversation("新会话"))
-        import_btn = QtWidgets.QPushButton("导入")
-        import_btn.setFixedWidth(scaled(50))
-        import_btn.clicked.connect(self._import_conversations)
-        export_btn = QtWidgets.QPushButton("导出")
-        export_btn.setFixedWidth(scaled(50))
-        export_btn.clicked.connect(lambda: self._export_conversation(self.session.current_conversation_id))
-        row.addWidget(title)
-        row.addStretch(1)
-        row.addWidget(new_btn)
-        row.addWidget(import_btn)
-        row.addWidget(export_btn)
-
-        self.conversation_search = QtWidgets.QLineEdit()
-        self.conversation_search.setPlaceholderText("搜索会话")
-        self.conversation_search.textChanged.connect(self._filter_conversations)
-
-        self.conversation_list = QtWidgets.QListWidget()
-        self.conversation_list.setObjectName("ConversationList")
-        self.conversation_list.currentItemChanged.connect(self._conversation_item_changed)
-        self.conversation_list.itemDoubleClicked.connect(self._rename_conversation_item)
-        self.conversation_list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.conversation_list.customContextMenuRequested.connect(self._show_conversation_menu)
-
-        self.storage_status_label = QtWidgets.QLabel("")
-        self.storage_status_label.setObjectName("HintText")
-        self.storage_status_label.setWordWrap(True)
-
-        layout.addLayout(row)
-        layout.addWidget(self.conversation_search)
-        layout.addWidget(self.conversation_list, 1)
-        layout.addWidget(self.storage_status_label)
-        return sidebar
 
     def _build_center_workspace(self) -> QtWidgets.QWidget:
         center = QtWidgets.QFrame()
         center.setObjectName("CenterWorkspace")
         center.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         layout = QtWidgets.QVBoxLayout(center)
-        layout.setContentsMargins(scaled(8), scaled(8), scaled(8), scaled(8))
-        layout.setSpacing(scaled(8))
+        layout.setContentsMargins(scaled(4), scaled(4), scaled(4), scaled(4))
+        layout.setSpacing(scaled(6))
 
         self.chat = ChatView()
         self.chat.setObjectName("ChatSurface")
         self.chat.set_image_path_preprocessor(self.session.materialize_current_image_paths)
-        layout.addWidget(self.chat, 1)
 
+        layout.addWidget(self._build_conversation_tab_bar())
+        layout.addWidget(self.chat, 1)
         layout.addWidget(self._build_composer_controls())
 
         self.trace = ExecutionTrace()
         self.trace.setObjectName("ExecutionTrace")
-        self.trace.setMinimumHeight(scaled(150))
-        self.trace.setMaximumHeight(scaled(190))
+        self.trace.setMinimumHeight(scaled(88))
+        self.trace.setMaximumHeight(scaled(118))
         self.trace.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         layout.addWidget(self.trace)
         return center
+
+    def _build_conversation_tab_bar(self) -> QtWidgets.QWidget:
+        bar = QtWidgets.QFrame()
+        bar.setObjectName("ConversationTabsBar")
+        layout = QtWidgets.QHBoxLayout(bar)
+        layout.setContentsMargins(scaled(2), 0, scaled(2), 0)
+        layout.setSpacing(scaled(4))
+
+        self.conversation_tabs = QtWidgets.QTabBar()
+        self.conversation_tabs.setObjectName("ConversationTabBar")
+        self.conversation_tabs.setExpanding(False)
+        self.conversation_tabs.setUsesScrollButtons(True)
+        self.conversation_tabs.setElideMode(QtCore.Qt.ElideRight)
+        self.conversation_tabs.setDrawBase(False)
+        self.conversation_tabs.setFixedHeight(scaled(18))
+        self.conversation_tabs.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.conversation_tabs.currentChanged.connect(self._conversation_tab_changed)
+        self.conversation_tabs.tabBarDoubleClicked.connect(self._rename_conversation_tab)
+        self.conversation_tabs.customContextMenuRequested.connect(self._show_conversation_tab_menu)
+
+        new_tab_btn = QtWidgets.QPushButton("+")
+        new_tab_btn.setObjectName("TabAddButton")
+        new_tab_btn.setFixedSize(scaled(18), scaled(16))
+        new_tab_btn.setToolTip("新建会话")
+        new_tab_btn.clicked.connect(lambda: self.session.create_conversation("新会话"))
+
+        layout.addWidget(self.conversation_tabs, 0)
+        layout.addStretch(1)
+        layout.addWidget(new_tab_btn)
+        bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        bar.setFixedHeight(scaled(20))
+        return bar
 
     def _build_composer_controls(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QFrame()
         bar.setObjectName("ComposerBar")
         layout = QtWidgets.QHBoxLayout(bar)
-        layout.setContentsMargins(scaled(10), scaled(8), scaled(10), scaled(8))
-        layout.setSpacing(scaled(10))
+        layout.setContentsMargins(scaled(8), scaled(6), scaled(8), scaled(6))
+        layout.setSpacing(scaled(8))
 
         left = QtWidgets.QHBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(scaled(8))
+
+        self.context_usage_label = QtWidgets.QLabel("上下文 0%")
+        self.context_usage_label.setObjectName("ContextUsageChip")
+        self.context_usage_label.setMinimumWidth(scaled(82))
+        left.addWidget(self.context_usage_label)
+
         left.addWidget(QtWidgets.QLabel("模型"))
         self.provider_combo = QtWidgets.QComboBox()
-        self.provider_combo.setMinimumWidth(scaled(150))
+        self.provider_combo.setMinimumWidth(scaled(140))
         left.addWidget(self.provider_combo)
         self.model_combo = QtWidgets.QComboBox()
-        self.model_combo.setEditable(True)
-        self.model_combo.setMinimumWidth(scaled(170))
+        self.model_combo.setEditable(False)
+        self.model_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
+        self.model_combo.setMinimumWidth(scaled(160))
         left.addWidget(self.model_combo)
         self.provider_status = QtWidgets.QLabel("")
-        self.provider_status.setMinimumWidth(scaled(84))
+        self.provider_status.setMinimumWidth(scaled(78))
         self.provider_status.setObjectName("StatusPill")
         left.addWidget(self.provider_status)
 
@@ -251,7 +242,7 @@ class AgentMainPanel(QtWidgets.QWidget):
             self.mode_combo.setItemData(self.mode_combo.count() - 1, meta.description, QtCore.Qt.ToolTipRole)
         mode_index = self.mode_combo.findData(self.session.work_mode)
         self.mode_combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
-        self.mode_combo.setMinimumWidth(scaled(86))
+        self.mode_combo.setMinimumWidth(scaled(82))
         left.addWidget(self.mode_combo)
 
         left.addSpacing(scaled(10))
@@ -259,7 +250,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.thinking_combo = QtWidgets.QComboBox()
         self.thinking_combo.addItems(list(THINKING_LEVELS.keys()))
         self.thinking_combo.setCurrentText(self.session.current_thinking_level)
-        self.thinking_combo.setMinimumWidth(scaled(74))
+        self.thinking_combo.setMinimumWidth(scaled(70))
         left.addWidget(self.thinking_combo)
 
         self.thinking_hint = QtWidgets.QLabel(THINKING_LEVELS[self.session.current_thinking_level]["description"])
@@ -267,13 +258,13 @@ class AgentMainPanel(QtWidgets.QWidget):
         left.addWidget(self.thinking_hint, 1)
 
         self.clear_messages_btn = QtWidgets.QPushButton("清空消息")
-        self.clear_messages_btn.setFixedWidth(scaled(78))
+        self.clear_messages_btn.setFixedWidth(scaled(74))
         self.clear_messages_btn.clicked.connect(self._clear_current_conversation_messages)
 
         layout.addLayout(left, 1)
         layout.addWidget(self.clear_messages_btn)
         bar.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
-        bar.setMaximumHeight(scaled(48))
+        bar.setMaximumHeight(scaled(36))
         return bar
 
     def _wire(self) -> None:
@@ -283,11 +274,14 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.chat.node_link_clicked.connect(self._focus_node_from_chat)
         self.chat.plan_confirm_requested.connect(self.session.confirm_plan)
         self.chat.plan_cancel_requested.connect(self.session.cancel_plan)
+        self.chat.pending_images_changed.connect(self._update_context_usage)
         self.context_panel.refresh_requested.connect(self.session.refresh_context)
 
         self.session.message_added.connect(self.chat.add_message)
+        self.session.message_added.connect(self._update_context_usage)
         self.session.event_added.connect(self.trace.add_event)
         self.session.context_changed.connect(self.context_panel.set_context)
+        self.session.context_changed.connect(self._update_context_usage)
         self.session.providers_changed.connect(self._providers_changed)
         self.session.busy_changed.connect(self.chat.set_busy)
         self.session.busy_changed.connect(self._set_actions_busy)
@@ -303,57 +297,77 @@ class AgentMainPanel(QtWidgets.QWidget):
 
     def _add_action_button(self, layout, label: str, action: str) -> None:
         button = QtWidgets.QPushButton(label)
+        button.setObjectName("GhostButton")
         button.setProperty("agent_action", action)
         button.clicked.connect(lambda checked=False, name=action: self.session.run_action(name))
         self._action_buttons[action] = button
         layout.addWidget(button)
 
     def _refresh_conversation_list(self) -> None:
-        if not hasattr(self, "conversation_list"):
-            return
         self._syncing_conversations = True
-        self.conversation_list.clear()
-        current_row = 0
-        visible_row = 0
-        for conversation in self.session.conversations:
-            if self._conversation_filter and self._conversation_filter not in conversation.title.lower():
-                continue
-            suffix = f" · {len(conversation.messages)}条" if conversation.messages else ""
-            item = QtWidgets.QListWidgetItem(f"{conversation.title}{suffix}")
-            item.setData(QtCore.Qt.UserRole, conversation.id)
-            item.setToolTip(f"Created at {conversation.created_at}")
-            self.conversation_list.addItem(item)
-            if conversation.id == self.session.current_conversation_id:
-                current_row = visible_row
-            visible_row += 1
-        if self.conversation_list.count():
-            self.conversation_list.setCurrentRow(current_row)
+        self._refresh_conversation_tabs()
         self._syncing_conversations = False
 
-    def _filter_conversations(self, text: str) -> None:
-        self._conversation_filter = text.strip().lower()
-        self._refresh_conversation_list()
-
-    def _conversation_item_changed(self, current, previous) -> None:
-        if self._syncing_conversations or current is None:
+    def _refresh_conversation_tabs(self) -> None:
+        if not hasattr(self, "conversation_tabs"):
             return
-        conversation_id = current.data(QtCore.Qt.UserRole)
+        self.conversation_tabs.blockSignals(True)
+        try:
+            while self.conversation_tabs.count():
+                self.conversation_tabs.removeTab(0)
+            current_index = 0
+            for index, conversation in enumerate(self.session.conversations):
+                message_count = len(conversation.messages)
+                label = conversation.title
+                if len(label) > 22:
+                    label = label[:21] + "..."
+                tab_index = self.conversation_tabs.addTab(label)
+                self.conversation_tabs.setTabData(tab_index, conversation.id)
+                suffix = f"\n{message_count} 条消息" if message_count else ""
+                self.conversation_tabs.setTabToolTip(tab_index, f"{conversation.title}{suffix}")
+                if conversation.id == self.session.current_conversation_id:
+                    current_index = index
+            if self.conversation_tabs.count():
+                self.conversation_tabs.setCurrentIndex(current_index)
+        finally:
+            self.conversation_tabs.blockSignals(False)
+
+    def _conversation_tab_changed(self, index: int) -> None:
+        if self._syncing_conversations or index < 0:
+            return
+        conversation_id = self.conversation_tabs.tabData(index)
         if conversation_id:
             self.session.switch_conversation(conversation_id)
 
-    def _show_conversation_menu(self, pos) -> None:
-        item = self.conversation_list.itemAt(pos)
-        if item is None:
+    def _rename_conversation_tab(self, index: int) -> None:
+        if index < 0:
             return
-        conversation_id = item.data(QtCore.Qt.UserRole)
+        conversation_id = self.conversation_tabs.tabData(index)
+        if conversation_id:
+            self._rename_conversation(conversation_id)
+
+    def _show_conversation_tab_menu(self, pos) -> None:
+        index = self.conversation_tabs.tabAt(pos)
+        conversation_id = self.conversation_tabs.tabData(index) if index >= 0 else ""
         menu = QtWidgets.QMenu(self)
+        new_action = menu.addAction("新建会话")
+        import_action = menu.addAction("导入会话")
         rename_action = menu.addAction("重命名")
         export_action = menu.addAction("导出")
         clear_action = menu.addAction("清空消息")
         delete_action = menu.addAction("删除会话")
-        action = menu.exec_(self.conversation_list.mapToGlobal(pos))
-        if action == rename_action:
-            self._rename_conversation_item(item)
+        if not conversation_id:
+            rename_action.setEnabled(False)
+            export_action.setEnabled(False)
+            clear_action.setEnabled(False)
+            delete_action.setEnabled(False)
+        action = menu.exec_(self.conversation_tabs.mapToGlobal(pos))
+        if action == new_action:
+            self.session.create_conversation("新会话")
+        elif action == import_action:
+            self._import_conversations()
+        elif action == rename_action:
+            self._rename_conversation(conversation_id)
         elif action == export_action:
             self._export_conversation(conversation_id)
         elif action == clear_action:
@@ -361,10 +375,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         elif action == delete_action:
             self._delete_conversation(conversation_id)
 
-    def _rename_conversation_item(self, item) -> None:
-        conversation_id = item.data(QtCore.Qt.UserRole)
-        if not conversation_id:
-            return
+    def _rename_conversation(self, conversation_id: str) -> None:
         current_title = self._conversation_title_by_id(conversation_id)
         new_title, ok = QtWidgets.QInputDialog.getText(self, "重命名会话", "会话名称", text=current_title)
         if ok:
@@ -445,56 +456,68 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.delete_message(self.session.current_conversation_id, message_index)
 
     def _set_storage_status(self, text: str) -> None:
-        if hasattr(self, "storage_status_label"):
-            self.storage_status_label.setText(text)
-
-    def _toggle_left_sidebar(self) -> None:
-        sizes = self.main_splitter.sizes()
-        if self._left_sidebar_visible:
-            self._left_sidebar_width = max(scaled(160), sizes[0])
-            self.left_sidebar.hide()
-            self.main_splitter.setSizes([0, sizes[1] + sizes[0], sizes[2]])
-            self.left_toggle_btn.setText("▶")
-            self._left_sidebar_visible = False
-        else:
-            self.left_sidebar.show()
-            total = sum(self.main_splitter.sizes()) or scaled(1200)
-            right = self.main_splitter.sizes()[2]
-            center = max(scaled(420), total - self._left_sidebar_width - right)
-            self.main_splitter.setSizes([self._left_sidebar_width, center, right])
-            self.left_toggle_btn.setText("◀")
-            self._left_sidebar_visible = True
+        self.setToolTip(text)
 
     def _toggle_right_sidebar(self) -> None:
         sizes = self.main_splitter.sizes()
         if self._right_sidebar_visible:
-            self._right_sidebar_width = max(scaled(240), sizes[2])
+            self._right_sidebar_width = max(scaled(240), sizes[1])
             self.context_panel.hide()
-            self.main_splitter.setSizes([sizes[0], sizes[1] + sizes[2], 0])
-            self.right_toggle_btn.setText("◀")
+            self.main_splitter.setSizes([sizes[0] + sizes[1], 0])
+            self.right_toggle_btn.setText("<")
             self._right_sidebar_visible = False
         else:
             self.context_panel.show()
             total = sum(self.main_splitter.sizes()) or scaled(1200)
-            left = self.main_splitter.sizes()[0]
-            center = max(scaled(420), total - left - self._right_sidebar_width)
-            self.main_splitter.setSizes([left, center, self._right_sidebar_width])
-            self.right_toggle_btn.setText("▶")
+            center = max(scaled(420), total - self._right_sidebar_width)
+            self.main_splitter.setSizes([center, self._right_sidebar_width])
+            self.right_toggle_btn.setText(">")
             self._right_sidebar_visible = True
+        self._refresh_splitter_after_toggle()
+
+    def _refresh_splitter_after_toggle(self) -> None:
+        for widget in (self.center_workspace, self.context_panel, self.main_splitter):
+            widget.updateGeometry()
+            widget.update()
+        self._position_right_toggle()
+        QtCore.QTimer.singleShot(0, self._repaint_splitter_widgets)
+
+    def _repaint_splitter_widgets(self) -> None:
+        for widget in (self.center_workspace, self.context_panel, self.main_splitter):
+            widget.repaint()
+        self._position_right_toggle()
+
+    def _position_right_toggle(self) -> None:
+        if not hasattr(self, "right_toggle_btn") or not hasattr(self, "main_splitter"):
+            return
+        parent = self.right_toggle_btn.parentWidget()
+        if parent is None:
+            return
+        button_width = self.right_toggle_btn.width()
+        button_height = self.right_toggle_btn.height()
+        sizes = self.main_splitter.sizes()
+        center_width = sizes[0] if sizes else self.main_splitter.width()
+        splitter_x = self.main_splitter.x()
+        splitter_y = self.main_splitter.y()
+        if self._right_sidebar_visible:
+            boundary_x = splitter_x + min(center_width, self.main_splitter.width())
+            x = boundary_x - button_width // 2
+        else:
+            x = splitter_x + self.main_splitter.width() - button_width
+        x = max(splitter_x, min(parent.width() - button_width, x))
+        y = splitter_y + max(0, (self.main_splitter.height() - button_height) // 2)
+        self.right_toggle_btn.setGeometry(x, y, button_width, button_height)
+        self.right_toggle_btn.raise_()
 
     def _toggle_focus_mode(self) -> None:
         self._focus_mode = not self._focus_mode
         if self._focus_mode:
             self._trace_visible_before_focus = self.trace.isVisible()
-            if self._left_sidebar_visible:
-                self._toggle_left_sidebar()
             if self._right_sidebar_visible:
                 self._toggle_right_sidebar()
             self.trace.hide()
             self.focus_mode_btn.setText("退出专注")
         else:
-            if not self._left_sidebar_visible:
-                self._toggle_left_sidebar()
             if not self._right_sidebar_visible:
                 self._toggle_right_sidebar()
             if self._trace_visible_before_focus:
@@ -515,6 +538,7 @@ class AgentMainPanel(QtWidgets.QWidget):
             for event in conversation.events:
                 self.trace.add_event(event)
         self._refresh_conversation_list()
+        self._update_context_usage()
 
     def _populate_provider_combo(self) -> None:
         self.provider_combo.blockSignals(True)
@@ -534,6 +558,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         self.session.set_provider_index(index)
         self._populate_model_combo()
         self._update_provider_status()
+        self._update_context_usage()
 
     def _populate_model_combo(self) -> None:
         if not hasattr(self, "model_combo"):
@@ -564,6 +589,7 @@ class AgentMainPanel(QtWidgets.QWidget):
         if model:
             self.session.set_current_model(model)
         self._update_provider_status()
+        self._update_context_usage()
 
     def _thinking_changed(self, level: str) -> None:
         self.session.set_thinking_level(level)
@@ -610,6 +636,7 @@ class AgentMainPanel(QtWidgets.QWidget):
                 english, chinese = labels.get(action, (action, action))
                 button.setText(english if is_english else chinese)
         self._update_mode_controls()
+        self._update_context_usage()
 
     def _update_provider_status(self) -> None:
         provider = self.session.current_provider
@@ -627,6 +654,61 @@ class AgentMainPanel(QtWidgets.QWidget):
             self.provider_status.setToolTip("Using the direct API key saved in provider settings.")
         else:
             self.provider_status.setToolTip("")
+
+    def _update_context_usage(self, *_args) -> None:
+        if not hasattr(self, "context_usage_label"):
+            return
+        conversation = self.session.current_conversation
+        text_chars = 0
+        image_count = 0
+        for message in conversation.messages:
+            text_chars += len(str(getattr(message, "role", "")))
+            text_chars += len(str(getattr(message, "content", "")))
+            image_count += len(getattr(message, "image_paths", []) or [])
+        if hasattr(self, "chat"):
+            image_count += len(getattr(self.chat, "pending_images", []) or [])
+        text_chars += len(str(getattr(self.session, "context", {}) or {}))
+
+        estimated_tokens = max(0, int(round(text_chars / 3.5)) + image_count * 850)
+        context_window = self._estimated_context_window(self.session.current_provider.model)
+        percent = 0 if estimated_tokens <= 0 else min(100, int(round((estimated_tokens / context_window) * 100)))
+        if estimated_tokens > 0 and percent == 0:
+            percent = 1
+        is_english = getattr(self.session, "ui_language", "zh") == "en"
+        prefix = "Context" if is_english else "上下文"
+        self.context_usage_label.setText(f"{prefix} {percent}%")
+        if is_english:
+            tooltip = (
+                f"Local estimate: about {estimated_tokens:,} tokens / {context_window:,} context window. "
+                "Provider-reported usage is not wired yet; TODO already tracks token/context management."
+            )
+        else:
+            tooltip = (
+                f"本地估算：约 {estimated_tokens:,} tokens / {context_window:,} 上下文窗口。"
+                " 当前版本还没有接入 provider 返回的真实 usage；TODO 中已有 token / context 管理计划。"
+            )
+        self.context_usage_label.setToolTip(tooltip)
+
+    def _estimated_context_window(self, model: str) -> int:
+        normalized = (model or "").strip().lower()
+        explicit_windows = (
+            ("1000k", 1_000_000),
+            ("1m", 1_000_000),
+            ("200k", 200_000),
+            ("128k", 128_000),
+            ("64k", 64_000),
+            ("32k", 32_000),
+            ("16k", 16_000),
+            ("8k", 8_000),
+        )
+        for marker, size in explicit_windows:
+            if marker in normalized:
+                return size
+        if "gemini" in normalized:
+            return 1_000_000
+        if "claude" in normalized or "opus" in normalized or "sonnet" in normalized:
+            return 200_000
+        return 128_000
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.session.providers, self.session.vision_backend, self)
