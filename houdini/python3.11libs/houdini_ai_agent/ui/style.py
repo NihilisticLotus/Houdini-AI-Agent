@@ -633,6 +633,127 @@ QHeaderView::section {
     background: #25272b;
     color: #e8edf3;
 }
+
+QFrame#ToolResultCard {
+    border: 1px solid #343741;
+    border-radius: 6px;
+    background: rgba(30, 32, 38, 0.85);
+}
+
+QLabel#ToolStatusIcon {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#ToolResultTitle {
+    font-weight: 600;
+    color: #e8edf3;
+}
+
+QLabel#ToolResultMessage {
+    color: #cfd5df;
+}
+
+QLabel#ToolResultEvent {
+    color: #aeb4bf;
+}
+
+QLabel#ToolResultWarning {
+    color: #ff9800;
+}
+
+QLabel#ToolResultError {
+    color: #f44336;
+}
+
+QLabel#ToolResultPaths {
+    color: #8c929d;
+    font-size: @SMALL_FONT@px;
+}
+
+QFrame#ParamDiffView {
+    border: 1px solid #343741;
+    border-radius: 6px;
+    background: rgba(28, 30, 36, 0.90);
+}
+
+QFrame#ParamDiffRow {
+    border: none;
+    border-bottom: 1px solid #2b2d31;
+    border-radius: 0;
+    background: transparent;
+}
+
+QLabel#ParamDiffNode {
+    color: #61afef;
+    font-size: @SMALL_FONT@px;
+}
+
+QLabel#ParamDiffParm {
+    color: #e5c07b;
+    font-weight: 600;
+    font-size: @SMALL_FONT@px;
+}
+
+QLabel#ParamDiffArrow {
+    color: #5c6370;
+    font-weight: 700;
+}
+
+QFrame#TokenStatsFrame {
+    border: 1px solid #343741;
+    border-radius: 5px;
+    background: rgba(25, 27, 31, 0.72);
+}
+
+QLabel#TokenStatValue {
+    color: #e8edf3;
+    font-weight: 700;
+    font-size: @TITLE_FONT@px;
+}
+
+QTableWidget#TokenTable {
+    border: 1px solid #343741;
+    border-radius: 5px;
+    background: #1f2022;
+    gridline-color: #2b2d31;
+    font-size: @SMALL_FONT@px;
+}
+
+QListWidget#NodeCompleter {
+    border: 1px solid #4b5565;
+    border-radius: 6px;
+    background: #25272b;
+    padding: @LIST_PAD_V@px 0;
+    outline: none;
+}
+
+QListWidget#NodeCompleter::item {
+    padding: @LIST_PAD_V@px @LIST_PAD_H@px;
+    color: #dce2ea;
+}
+
+QListWidget#NodeCompleter::item:hover,
+QListWidget#NodeCompleter::item:selected {
+    background: #273b5d;
+    color: #f4f7fb;
+    border-radius: 3px;
+}
+
+QFrame#CodePreviewWidget {
+    border: 1px solid #343741;
+    border-radius: 6px;
+    background: #1a1b1d;
+}
+
+QTextBrowser#CodeDisplay {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: #abb2bf;
+    padding: @INPUT_PAD_V@px @INPUT_PAD_H@px;
+    selection-background-color: #3e4451;
+}
 """
 
 

@@ -824,6 +824,7 @@ class AgentSession(QtCore.QObject):
         self._set_busy(True)
         self._active_task_id = uuid.uuid4().hex
         self._add_message("user", text, image_paths)
+        self._fire_hook("on_message_sent", text=text, image_paths=image_paths)
         self._maybe_title_current_conversation(text, image_paths)
         self._add_event("收到请求", f"Thinking: {self.current_thinking_level} / Model: {self.current_provider.model}", "info")
 
@@ -1198,6 +1199,7 @@ class AgentSession(QtCore.QObject):
         if task_id != self._active_task_id:
             return
         self._add_event(event_title, event_detail, status)
+        self._fire_hook("on_message_received", response=response, status=status)
         if status == "success":
             if self.work_mode == WORK_MODE_PLAN and self._handle_plan_response(response):
                 pass
@@ -1212,6 +1214,7 @@ class AgentSession(QtCore.QObject):
         else:
             self._add_message("assistant", response)
             self._pending_model_fix_context = None
+            self._fire_hook("on_error", error=response, source="model_call")
         self.save_autosaved_conversations()
         self._active_task_id = None
         followup = self._queued_followup_call
@@ -1258,7 +1261,9 @@ class AgentSession(QtCore.QObject):
             if not self._model_action_allowed_or_report(action_name):
                 reply_parts.append(self._blocked_message(action_name))
                 continue
+            self._fire_hook("on_tool_before", tool_name=action_name, args=action)
             result = self._execute_model_action(action)
+            self._fire_hook("on_tool_after", tool_name=action_name, args=action, result=result)
             self._add_event(result.get("title", "Model action"), "Selected by model plan.", "info")
             for event in result.get("events", []):
                 self._add_event(event.get("title", ""), event.get("detail", ""), event.get("status", "info"))
@@ -1310,6 +1315,7 @@ class AgentSession(QtCore.QObject):
         completed.append(f"{completed_index + 1}. {title}")
         self._sync_plan_message(plan)
         self._add_event("计划步骤完成", f"{completed_index + 1}/{len(steps)}：{title}", "success")
+        self._fire_hook("on_plan_step_updated", step_index=completed_index, step_title=title, plan=plan)
         if int(execution.get("step_index") or 0) < len(steps):
             reply_parts.append("我会继续执行下一步。")
 
@@ -1405,6 +1411,7 @@ class AgentSession(QtCore.QObject):
         self._store_plan(plan)
         self._add_message("plan", json.dumps(plan, ensure_ascii=False))
         self._add_event("生成执行计划", f"等待用户确认：{len(steps)} 个步骤。", "success")
+        self._fire_hook("on_plan_created", plan=plan)
         return True
 
     def _normalize_plan(self, data: Dict[str, object], source_text: str) -> Dict[str, object]:
@@ -1540,6 +1547,14 @@ class AgentSession(QtCore.QObject):
             update_todo=self._update_todo,
         )
 
+    def _fire_hook(self, event: str, **kwargs: object) -> None:
+        """Fire a plugin hook event. Safe to call even if the hook system is not loaded."""
+        try:
+            from houdini_ai_agent.core.hooks import get_hook_manager
+            get_hook_manager().fire(event, **kwargs)
+        except Exception:
+            pass
+
     def _extract_model_json(self, text: str) -> Dict[str, object]:
         candidates = []
         for match in re.finditer(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE):
@@ -1649,11 +1664,11 @@ class AgentSession(QtCore.QObject):
 
     def _toolbar_action_request(self, action: str) -> str:
         requests = {
-            "analyze_scene": "用户点击了“分析工程”。请基于当前 Houdini 上下文分析工程结构、风险和下一步建议。通常不需要调用工具，除非你判断必须执行可用工具。",
-            "inspect_selection": "用户点击了“查看选中节点”。请基于当前 Houdini 上下文检查选中节点；如果需要读取选择信息，请调用 inspect_selection。",
-            "create_nodes": "用户点击了“创建节点”。请基于当前 Houdini 上下文判断是否应创建节点；如果缺少具体节点类型，请给出简短澄清，不要随意创建。",
-            "fix_error": "用户点击了“修复错误”。请分析当前选中节点和当前网络中的错误；如果可编辑代码参数可修复，请返回 apply_code action 写入完整修复代码并让插件执行。",
-            "capture_viewport": "用户点击了“捕获视口”。请判断是否需要捕获当前视口；如需要，请调用 capture_viewport。",
+            "analyze_scene": "用户点击了「分析工程」。请基于当前 Houdini 上下文分析工程结构、风险和下一步建议。通常不需要调用工具，除非你判断必须执行可用工具。",
+            "inspect_selection": "用户点击了「查看选中节点」。请基于当前 Houdini 上下文检查选中节点；如果需要读取选择信息，请调用 inspect_selection。",
+            "create_nodes": "用户点击了「创建节点」。请基于当前 Houdini 上下文判断是否应创建节点；如果缺少具体节点类型，请给出简短澄清，不要随意创建。",
+            "fix_error": "用户点击了「修复错误」。请分析当前选中节点和当前网络中的错误；如果可编辑代码参数可修复，请返回 apply_code action 写入完整修复代码并让插件执行。",
+            "capture_viewport": "用户点击了「捕获视口」。请判断是否需要捕获当前视口；如需要，请调用 capture_viewport。",
         }
         return requests.get(action, f"用户点击了工具栏动作：{action}。请基于当前 Houdini 上下文决定是否调用可用工具。")
 
@@ -1682,7 +1697,7 @@ class AgentSession(QtCore.QObject):
         else:
             selected_summary = "none"
         language = self._preferred_response_language(user_text)
-        return (
+        prompt = (
             "You are Houdini AI Agent, a helpful assistant working inside SideFX Houdini. "
             "Be concise, practical, and action-oriented. "
             "When the user attaches images, analyze them and relate them to Houdini workflows when relevant. "
@@ -1695,6 +1710,15 @@ class AgentSession(QtCore.QObject):
             f"Viewport: {context.get('viewport', '')}\n"
             f"Summary: {context.get('summary', '')}\n"
         )
+        # Inject user rules at the end for highest priority
+        try:
+            from houdini_ai_agent.core.rules_manager import get_rules_for_prompt
+            rules_text = get_rules_for_prompt()
+            if rules_text:
+                prompt += f"\n{rules_text}\n"
+        except Exception:
+            pass
+        return prompt
 
     def _build_agent_tool_prompt(self, user_text: str, context: Dict[str, object], has_images: bool = False) -> str:
         fix_context = self._error_fix_context()
@@ -1705,7 +1729,7 @@ class AgentSession(QtCore.QObject):
                 "The user attached image files to this request. Analyze the attached image content before deciding whether a Houdini tool is needed. "
                 "If you cannot access the image, return a concise response saying the image transport failed instead of pretending no image was attached.\n"
             )
-        return (
+        prompt = (
             "You are controlling a Houdini plugin that can execute a small set of real HOM tools.\n"
             f"Work mode: {self.tool_registry.mode_label(self.work_mode)}. {self.tool_registry.mode_instruction(self.work_mode)}\n"
             "First decide from the user's request and scene context whether a tool should be executed.\n"
@@ -1736,10 +1760,19 @@ class AgentSession(QtCore.QObject):
             f"Scene context: {json.dumps(context, ensure_ascii=False)}\n"
             f"Editable error/code context: {json.dumps(fix_context, ensure_ascii=False)}\n"
         )
+        # Inject user rules at the end for highest priority
+        try:
+            from houdini_ai_agent.core.rules_manager import get_rules_for_prompt
+            rules_text = get_rules_for_prompt()
+            if rules_text:
+                prompt += f"\n{rules_text}\n"
+        except Exception:
+            pass
+        return prompt
 
     def _build_codex_prompt(self, user_text: str, context: Dict[str, object], source_text: str = "") -> str:
         language = self._preferred_response_language(source_text or user_text)
-        return (
+        prompt = (
             "You are Houdini AI Agent working inside SideFX Houdini.\n"
             "Be concise, practical, and honest about what has and has not been executed.\n"
             f"Current work mode: {self.tool_registry.mode_label(self.work_mode)}. {self.tool_registry.mode_instruction(self.work_mode)}\n"
@@ -1758,6 +1791,15 @@ class AgentSession(QtCore.QObject):
             f"Errors: {context.get('errors', [])}\n\n"
             f"User request:\n{user_text}"
         )
+        # Inject user rules at the end for highest priority
+        try:
+            from houdini_ai_agent.core.rules_manager import get_rules_for_prompt
+            rules_text = get_rules_for_prompt()
+            if rules_text:
+                prompt += f"\n{rules_text}\n"
+        except Exception:
+            pass
+        return prompt
 
     def _resolve_vision_backend(self, primary: ProviderConfig) -> VisionBackendResolution:
         return VisionRouter(self.providers, self.vision_backend).resolve(primary)
